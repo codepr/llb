@@ -40,13 +40,12 @@
 #include <sys/socket.h>
 #include <sys/eventfd.h>
 #include <openssl/err.h>
-#include "util.h"
 #include "config.h"
-#include "server.h"
 #include "network.h"
+#include "npt_internal.h"
 
 /* Set non-blocking socket */
-static int set_nonblocking(int fd) {
+static inline int set_nonblocking(int fd) {
     int flags, result;
     flags = fcntl(fd, F_GETFL, 0);
 
@@ -57,66 +56,42 @@ static int set_nonblocking(int fd) {
     if (result == -1)
         goto err;
 
-    return 0;
+    return NPT_SUCCESS;
 
 err:
 
     perror("set_nonblocking");
-    return -1;
+    return NPT_FAILURE;
 }
 
-static int set_cloexec(int fd) {
+static inline int set_cloexec(int fd) {
     int flags, result;
     flags = fcntl(fd, F_GETFL, 0);
 
     if (flags == -1)
         goto err;
 
-    result = fcntl(fd, F_SETFD, flags |FD_CLOEXEC);
+    result = fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
     if (result == -1)
         goto err;
 
-    return 0;
+    return NPT_SUCCESS;
 
 err:
 
     perror("set_cloexec");
-    return -1;
+    return NPT_FAILURE;
 }
 
 /*
  * Set TCP_NODELAY flag to true, disabling Nagle's algorithm, no more waiting
  * for incoming packets on the buffer
  */
-static int set_tcp_nodelay(int fd) {
+static inline int set_tcp_nodelay(int fd) {
     return setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &(int) {1}, sizeof(int));
 }
 
-static int create_and_bind_unix(const char *sockpath) {
-
-    struct sockaddr_un addr;
-    int fd;
-
-    if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1) {
-        perror("socket error");
-        return -1;
-    }
-
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-
-    strncpy(addr.sun_path, sockpath, sizeof(addr.sun_path) - 1);
-    unlink(sockpath);
-
-    if (bind(fd, (struct sockaddr*) &addr, sizeof(addr)) == -1) {
-        perror("bind error");
-        return -1;
-    }
-
-    return fd;
-}
-
-static int create_and_bind_tcp(const char *host, const char *port) {
+static int create_and_bind(const char *host, const char *port) {
 
     struct addrinfo hints = {
         .ai_family = AF_UNSPEC,
@@ -157,35 +132,27 @@ static int create_and_bind_tcp(const char *host, const char *port) {
 err:
 
     perror("Unable to bind socket");
-    return -1;
-}
-
-/* Auxiliary function for binding a socket to listen on defined port */
-static int create_and_bind(const char *host, const char *port, int s_family) {
-    return s_family == UNIX ?
-        create_and_bind_unix(host) : create_and_bind_tcp(host, port);
+    return NPT_FAILURE;
 }
 
 /*
  * Create a non-blocking socket and make it listen on the specfied address and
  * port
  */
-int make_listen(const char *host, const char *port, int s_family) {
+int make_listen(const char *host, const char *port) {
 
     int sfd;
 
-    if ((sfd = create_and_bind(host, port, s_family)) == -1)
+    if ((sfd = create_and_bind(host, port)) == -1)
         abort();
 
     if ((set_nonblocking(sfd)) == -1)
         abort();
 
-    if ((set_cloexec(sfd)) == -1)
-        abort();
+    (void) set_cloexec(sfd);
 
     // Set TCP_NODELAY only for TCP sockets
-    if (s_family == INET)
-        (void) set_tcp_nodelay(sfd);
+    (void) set_tcp_nodelay(sfd);
 
     if ((listen(sfd, conf->tcp_backlog)) == -1) {
         perror("listen");
@@ -207,19 +174,21 @@ static int accept_conn(int sfd, char *ip) {
 
     if ((clientsock = accept(sfd, (struct sockaddr *) &addr, &addrlen)) < 0) {
         if (errno != EWOULDBLOCK && errno != EAGAIN) perror("accept");
-        return -1;
+        return NPT_FAILURE;
     }
 
-    (void) set_nonblocking(clientsock);
+    if ((set_nonblocking(clientsock)) == -1)
+        abort();
+
     (void) set_cloexec(clientsock);
 
     // Set TCP_NODELAY only for TCP sockets
-    if (conf->socket_family == INET) (void) set_tcp_nodelay(clientsock);
+    (void) set_tcp_nodelay(clientsock);
 
     char ip_buff[INET_ADDRSTRLEN];
     if (inet_ntop(AF_INET, &addr.sin_addr, ip_buff, sizeof(ip_buff)) == NULL) {
         if (close(clientsock) < 0) perror("close");
-        return -1;
+        return NPT_FAILURE;
     }
 
     if (ip)
@@ -228,45 +197,40 @@ static int accept_conn(int sfd, char *ip) {
     return clientsock;
 }
 
-/* Send all bytes contained in buf, updating sent bytes counter */
-ssize_t send_bytes(int fd, const unsigned char *buf, size_t len) {
-
-    size_t total = 0;
-    size_t bytesleft = len;
+ssize_t stream_send(int fd, struct stream *stream) {
+    size_t total = stream->size;
     ssize_t n = 0;
 
-    while (total < len) {
-        n = send(fd, buf + total, bytesleft, MSG_NOSIGNAL);
+    while (stream->size > 0) {
+        n = write(fd, stream->buf + n, stream->size);
         if (n == -1) {
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 break;
             else
                 goto err;
         }
-        total += n;
-        bytesleft -= n;
+        stream->size -= n;
     }
 
-    return total;
+    return total - stream->size;
 
 err:
 
     fprintf(stderr, "send(2) - error sending data: %s\n", strerror(errno));
-    return -1;
+    return NPT_FAILURE;
 }
 
 /*
  * Receive a given number of bytes on the descriptor fd, storing the stream of
  * data into a 2 Mb capped buffer
  */
-ssize_t recv_bytes(int fd, unsigned char *buf, size_t bufsize) {
+ssize_t stream_recv(int fd, struct stream *stream) {
 
     ssize_t n = 0;
-    ssize_t total = 0;
 
-    while (total < (ssize_t) bufsize) {
+    do {
 
-        if ((n = recv(fd, buf, bufsize - total, 0)) < 0) {
+        if ((n = read(fd, stream->buf, stream->capacity - stream->size)) < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 break;
             else
@@ -274,18 +238,23 @@ ssize_t recv_bytes(int fd, unsigned char *buf, size_t bufsize) {
         }
 
         if (n == 0)
-            return 0;
+            return NPT_SUCCESS;
 
-        buf += n;
-        total += n;
-    }
+        stream->buf += n;
+        stream->size += n;
 
-    return total;
+        if (stream->size == stream->capacity) {
+            stream->capacity *= 2;
+            stream->buf = npt_realloc(stream->buf, stream->capacity);
+        }
+    } while (n > 0);
+
+    return stream->size;
 
 err:
 
-    fprintf(stderr, "recv(2) - error reading data: %s\n", strerror(errno));
-    return -1;
+    fprintf(stderr, "read(2) - error reading data: %s\n", strerror(errno));
+    return NPT_FAILURE;
 }
 
 void openssl_init() {
@@ -313,16 +282,16 @@ SSL_CTX *create_ssl_context() {
     SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2|SSL_OP_NO_SSLv3);
     SSL_CTX_set_options(ctx, SSL_OP_SINGLE_DH_USE);
 
-    if (!(conf->tls_protocols & SOL_TLSv1))
+    if (!(conf->tls_protocols & NPT_TLSv1))
         SSL_CTX_set_options(ctx, SSL_OP_NO_TLSv1);
-    if (!(conf->tls_protocols & SOL_TLSv1_1))
+    if (!(conf->tls_protocols & NPT_TLSv1_1))
         SSL_CTX_set_options(ctx, SSL_OP_NO_TLSv1_1);
 #ifdef SSL_OP_NO_TLSv1_2
-    if (!(conf->tls_protocols & SOL_TLSv1_2))
+    if (!(conf->tls_protocols & NPT_TLSv1_2))
         SSL_CTX_set_options(ctx, SSL_OP_NO_TLSv1_2);
 #endif
 #ifdef SSL_OP_NO_TLSv1_3
-    if (!(conf->tls_protocols & SOL_TLSv1_3))
+    if (!(conf->tls_protocols & NPT_TLSv1_3))
         SSL_CTX_set_options(ctx, SSL_OP_NO_TLSv1_3);
 #endif
 
@@ -386,55 +355,51 @@ SSL *ssl_accept(SSL_CTX *ctx, int fd) {
     return ssl;
 }
 
-ssize_t ssl_send_bytes(SSL *ssl, const unsigned char *buf, size_t len) {
-
-    size_t total = 0;
-    size_t bytesleft = len;
+ssize_t ssl_stream_send(SSL *ssl, struct stream *stream) {
+    size_t total = stream->size;
     ssize_t n = 0;
 
     ERR_clear_error();
 
-    while (total < len) {
-        if ((n = SSL_write(ssl, buf + total, bytesleft)) <= 0) {
+    while (stream->size > 0) {
+        if ((n = SSL_write(ssl, stream->buf + n, stream->size)) <= 0) {
             int err = SSL_get_error(ssl, n);
             if (err == SSL_ERROR_WANT_WRITE || SSL_ERROR_NONE)
                 continue;
             if (err == SSL_ERROR_ZERO_RETURN
                 || (err == SSL_ERROR_SYSCALL && !errno))
-                return 0;  // Connection closed
+                return NPT_SUCCESS;  // Connection closed
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 break;
             else
                 goto err;
         }
-        total += n;
-        bytesleft -= n;
+        stream->size -= n;
     }
 
-    return total;
+    return total - stream->size;
 
 err:
 
     fprintf(stderr, "SSL_write(2) - error sending data: %s\n", strerror(errno));
-    return -1;
+    return NPT_FAILURE;
 }
 
-ssize_t ssl_recv_bytes(SSL *ssl, unsigned char *buf, size_t bufsize) {
+ssize_t ssl_stream_recv(SSL *ssl, struct stream *stream) {
 
     ssize_t n = 0;
-    ssize_t total = 0;
 
     ERR_clear_error();
 
-    while (total < (ssize_t) bufsize) {
-
-        if ((n = SSL_read(ssl, buf, bufsize - total)) <= 0) {
+    do {
+        n = SSL_read(ssl, stream->buf, stream->capacity - stream->size);
+        if (n <= 0) {
             int err = SSL_get_error(ssl, n);
             if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_NONE)
                 continue;
             if (err == SSL_ERROR_ZERO_RETURN
                 || (err == SSL_ERROR_SYSCALL && !errno))
-                return 0;  // Connection closed
+                return NPT_SUCCESS;  // Connection closed
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 break;
             else
@@ -442,18 +407,23 @@ ssize_t ssl_recv_bytes(SSL *ssl, unsigned char *buf, size_t bufsize) {
         }
 
         if (n == 0)
-            return 0;
+            return NPT_SUCCESS;
 
-        buf += n;
-        total += n;
-    }
+        stream->buf += n;
+        stream->size += n;
 
-    return total;
+        if (stream->size == stream->capacity) {
+            stream->capacity *= 2;
+            stream->buf = npt_realloc(stream->buf, stream->capacity);
+        }
+    } while (n > 0);
+
+    return stream->size;
 
 err:
 
     fprintf(stderr, "SSL_read(2) - error reading data: %s\n", strerror(errno));
-    return -1;
+    return NPT_FAILURE;
 }
 
 /*
@@ -466,14 +436,12 @@ static int conn_accept(struct connection *c, int fd) {
     return ret;
 }
 
-static ssize_t conn_send(struct connection *c,
-                         const unsigned char *buf, size_t len) {
-    return send_bytes(c->fd, buf, len);
+static ssize_t conn_send(struct connection *c, struct stream *stream) {
+    return stream_send(c->fd, stream);
 }
 
-static ssize_t conn_recv(struct connection *c,
-                         unsigned char *buf, size_t len) {
-    return recv_bytes(c->fd, buf, len);
+static ssize_t conn_recv(struct connection *c, struct stream * stream) {
+    return stream_recv(c->fd, stream);
 }
 
 static void conn_close(struct connection *c) {
@@ -491,14 +459,12 @@ static int conn_tls_accept(struct connection *c, int serverfd) {
     return fd;
 }
 
-static ssize_t conn_tls_send(struct connection *c,
-                             const unsigned char *buf, size_t len) {
-    return ssl_send_bytes(c->ssl, buf, len);
+static ssize_t conn_tls_send(struct connection *c, struct stream *stream) {
+    return ssl_stream_send(c->ssl, stream);
 }
 
-static ssize_t conn_tls_recv(struct connection *c,
-                             unsigned char *buf, size_t len) {
-    return ssl_recv_bytes(c->ssl, buf, len);
+static ssize_t conn_tls_recv(struct connection *c, struct stream * stream) {
+    return ssl_stream_recv(c->ssl, stream);
 }
 
 static void conn_tls_close(struct connection *c) {
@@ -535,7 +501,7 @@ void connection_init(struct connection *conn, const SSL_CTX *ssl_ctx) {
  * type of the underlying communication.
  */
 struct connection *connection_new(const SSL_CTX *ssl_ctx) {
-    struct connection *conn = xmalloc(sizeof(*conn));
+    struct connection *conn = npt_malloc(sizeof(*conn));
     if (!conn)
         return NULL;
     connection_init(conn, ssl_ctx);
@@ -551,12 +517,12 @@ int accept_connection(struct connection *c, int fd) {
     return c->accept(c, fd);
 }
 
-ssize_t send_data(struct connection *c, const unsigned char *buf, size_t len) {
-    return c->send(c, buf, len);
+ssize_t send_data(struct connection *c, struct stream *stream) {
+    return c->send(c, stream);
 }
 
-ssize_t recv_data(struct connection *c, unsigned char *buf, size_t len) {
-    return c->recv(c, buf, len);
+ssize_t recv_data(struct connection *c, struct stream *stream) {
+    return c->recv(c, stream);
 }
 
 void close_connection(struct connection *c) {

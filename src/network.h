@@ -35,9 +35,11 @@
 #include <sys/types.h>
 #include <sys/timerfd.h>
 
-// Socket families
-#define UNIX    0
-#define INET    1
+struct stream {
+    unsigned char *buf;
+    size_t size;
+    size_t capacity;
+};
 
 /*
  * Connection abstraction struct, provide a transparent interface for
@@ -62,8 +64,8 @@ struct connection {
     SSL_CTX *ctx;
     char ip[INET_ADDRSTRLEN + 6];
     int (*accept) (struct connection *, int);
-    ssize_t (*send) (struct connection *, const unsigned char *, size_t);
-    ssize_t (*recv) (struct connection *, unsigned char *, size_t);
+    ssize_t (*send) (struct connection *, struct stream *);
+    ssize_t (*recv) (struct connection *, struct stream *);
     void (*close) (struct connection *);
 };
 
@@ -73,9 +75,9 @@ struct connection *connection_new(const SSL_CTX *);
 
 int accept_connection(struct connection *, int);
 
-ssize_t send_data(struct connection *, const unsigned char *, size_t);
+ssize_t send_data(struct connection *, struct stream *);
 
-ssize_t recv_data(struct connection *, unsigned char *, size_t);
+ssize_t recv_data(struct connection *, struct stream *);
 
 void close_connection(struct connection *);
 
@@ -83,7 +85,7 @@ void close_connection(struct connection *);
  * Create a non-blocking socket and make it listen on the specfied address and
  * port
  */
-int make_listen(const char *, const char *, int);
+int make_listen(const char *, const char *);
 
 /* I/O management functions */
 
@@ -91,13 +93,13 @@ int make_listen(const char *, const char *, int);
  * Send all data in a loop, avoiding interruption based on the kernel buffer
  * availability
  */
-ssize_t send_bytes(int, const unsigned char *, size_t);
+ssize_t stream_send(int, struct stream *);
 
 /*
  * Receive (read) an arbitrary number of bytes from a file descriptor and
  * store them in a buffer
  */
-ssize_t recv_bytes(int, unsigned char *, size_t);
+ssize_t stream_recv(int, struct stream *);
 
 // Init SSL context
 SSL_CTX *create_ssl_context(void);
@@ -112,10 +114,10 @@ void openssl_cleanup(void);
 void load_certificates(SSL_CTX *, const char *, const char *, const char *);
 
 /* Send data like sendall but adding encryption SSL */
-ssize_t ssl_send_bytes(SSL *, const unsigned char *, size_t);
+ssize_t ssl_stream_send(SSL *, struct stream *);
 
 /* Recv data like recvall but adding encryption SSL */
-ssize_t ssl_recv_bytes(SSL *, unsigned char *, size_t);
+ssize_t ssl_stream_recv(SSL *, struct stream *);
 
 SSL *ssl_accept(SSL_CTX *, int);
 

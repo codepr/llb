@@ -24,10 +24,9 @@ CMakeScripts
 Makefile
 cmake_install.cmake
 install_manifest.txt
-sol.build
+npt.build
 prof_output
-sol
-sol_test
+npt
 test
 compile_commands.json
 certs/
