@@ -1,7 +1,7 @@
 #ifndef LOG_H
 #define LOG_H
 
-#define MAX_LOG_SIZE 119
+#define MAX_LOG_SIZE 300
 
 enum log_level { DEBUG, INFORMATION, WARNING, ERROR };
 

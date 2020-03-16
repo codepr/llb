@@ -96,9 +96,9 @@ struct server server;
  * suffer high contentions by the threads and thus being really fast.
  */
 
-static void client_init(struct client *);
+static void http_transaction_init(struct http_transaction *);
 
-static void client_deactivate(struct client *);
+static void http_transaction_deactivate(struct http_transaction *);
 
 // CALLBACKS for the eventloop
 static void accept_callback(struct ev_ctx *, void *);
@@ -111,7 +111,34 @@ static void write_callback(struct ev_ctx *, void *);
  * Processing message function, will be applied on fully formed mqtt packet
  * received on read_callback callback
  */
-static void process_message(struct ev_ctx *, struct client *);
+static void process_request(struct ev_ctx *, struct http_transaction *);
+
+static void process_response(struct ev_ctx *, struct http_transaction *);
+
+static inline void http_parse_header(struct http_transaction *);
+
+#define CHUNKED_COMPLETE(http) \
+    strcmp((char *) (http)->stream.buf + (http)->stream.size - 5, "0\r\n\r\n") == 0
+
+#define PROCESS_STREAM(http) do {                    \
+    if ((http)->status == WAITING_REQUEST) {         \
+        process_request((http)->ctx, (http));        \
+    } else if ((http)->status == WAITING_RESPONSE) { \
+        process_response((http)->ctx, (http));       \
+    }                                                \
+} while (0);
+
+// XXX Eyesore
+static inline void http_parse_header(struct http_transaction *http) {
+    const char *encoding =
+        strstr((const char *) http->stream.buf, "Transfer-Encoding");
+    if (encoding) {
+        if (strstr((const char *) http->stream.buf, "chunked"))
+            http->encoding = CHUNKED;
+        else
+            http->encoding = GENERIC;
+    }
+}
 
 /* Simple error_code to string function, to be refined */
 //static const char *npterr(int rc) {
@@ -144,18 +171,18 @@ static void process_message(struct ev_ctx *, struct client *);
  */
 
 /*
- * All clients are pre-allocated at the start of the server, but their buffers
+ * All transactions are pre-allocated at the start of the server, but their buffers
  * (read and write) are not, they're lazily allocated with this function, meant
  * to be called on the accept callback
  */
-static void client_init(struct client *client) {
-    client->status = WAITING_DATA;
-    client->stream.size = 0;
-    client->stream.capacity = 2048;
-    if (!client->stream.buf)
-        client->stream.buf = npt_calloc(2048, sizeof(unsigned char));
-    client->last_seen = time(NULL);
-    pthread_mutex_init(&client->mutex, NULL);
+static void http_transaction_init(struct http_transaction *http) {
+    http->status = WAITING_REQUEST;
+    http->encoding = UNSET;
+    http->stream.size = 0;
+    http->stream.capacity = 2048;
+    if (!http->stream.buf)
+        http->stream.buf = npt_calloc(2048, sizeof(unsigned char));
+    pthread_mutex_init(&http->mutex, NULL);
 }
 
 /*
@@ -164,20 +191,24 @@ static void client_init(struct client *client) {
  * to its state (e.g. if it's a clean_session connected client or not) and we
  * allow the clients memory pool to reclaim it
  */
-static void client_deactivate(struct client *client) {
+static void http_transaction_deactivate(struct http_transaction *http) {
 
 #if THREADSNR > 0
-    pthread_mutex_lock(&client->mutex);
+    pthread_mutex_lock(&http->mutex);
 #endif
 
-    client->stream.size = 0;
-    close_connection(&client->conn);
-    HASH_DEL(server.clients, client);
-    memorypool_free(server.pool, client);
+    log_debug("Deactivate");
+    http->stream.size = 0;
+    http->encoding = UNSET;
+    http->status = WAITING_REQUEST;
+    memset(http->stream.buf, 0x00, http->stream.capacity);
+    //close_connection(&http->conn);
+    //HASH_DEL(server.clients, client);
+    memorypool_free(server.pool, http);
 
 #if THREADSNR > 0
-    pthread_mutex_unlock(&client->mutex);
-    pthread_mutex_destroy(&client->mutex);
+    pthread_mutex_unlock(&http->mutex);
+    pthread_mutex_destroy(&http->mutex);
 #endif
 }
 
@@ -196,7 +227,7 @@ static void client_deactivate(struct client *client) {
  *      read, to be read and reading position taking into account the bytes
  *      required to encode the packet length.
  */
-static inline ssize_t client_read(struct client *c) {
+static inline int http_transaction_read(struct http_transaction *http) {
 
     ssize_t nread = 0;
 
@@ -204,15 +235,16 @@ static inline ssize_t client_read(struct client *c) {
      * Last status, we have access to the length of the packet and we know for
      * sure that it's not a PINGREQ/PINGRESP/DISCONNECT packet.
      */
-    nread = recv_data(&c->conn, &c->stream);
+    if (http->status == WAITING_REQUEST)
+        nread = recv_data(&http->pipe[CLIENT], &http->stream);
+    else if (http->status == WAITING_RESPONSE)
+        nread = recv_data(&http->pipe[BACKEND], &http->stream);
 
     if (errno != EAGAIN && errno != EWOULDBLOCK && nread <= 0)
         return nread == -1 ? -ERRSOCKETERR : -ERRCLIENTDC;
 
-    //if (errno == EAGAIN && c->read < c->toread)
-    //    return -ERREAGAIN;
-
-//exit:
+    if ((errno == EAGAIN || errno == EWOULDBLOCK))
+        return -ERREAGAIN;
 
     return NPT_SUCCESS;
 }
@@ -223,27 +255,32 @@ static inline ssize_t client_read(struct client *c) {
  * EAGAIN (socket descriptor must be in non-blocking mode) error is raised,
  * meaning we cannot write anymore for the current cycle.
  */
-static inline int client_write(struct client *c) {
+static inline int http_transaction_write(struct http_transaction *http) {
+    ssize_t wrote = 0;
 #if THREADSNR > 0
-    pthread_mutex_lock(&c->mutex);
+    pthread_mutex_lock(&http->mutex);
 #endif
-    ssize_t wrote = send_data(&c->conn, &c->stream);
+    log_debug("Forwarding %d (%ld bytes)", http->status, http->stream.size);
+    if (http->status == FORWARDING_REQUEST)
+        wrote = send_data(&http->pipe[BACKEND], &http->stream);
+    else if (http->status == FORWARDING_RESPONSE)
+        wrote = send_data(&http->pipe[CLIENT], &http->stream);
     if (errno != EAGAIN && errno != EWOULDBLOCK && wrote < 0)
         goto clientdc;
 #if THREADSNR > 0
-    pthread_mutex_unlock(&c->mutex);
+    pthread_mutex_unlock(&http->mutex);
 #endif
     return NPT_SUCCESS;
 
 clientdc:
 #if THREADSNR > 0
-    pthread_mutex_unlock(&c->mutex);
+    pthread_mutex_unlock(&http->mutex);
 #endif
     return -ERRSOCKETERR;
 
 //eagain:
 #if THREADSNR > 0
-    pthread_mutex_unlock(&c->mutex);
+    pthread_mutex_unlock(&http->mutex);
 #endif
     return -ERREAGAIN;
 }
@@ -260,8 +297,9 @@ clientdc:
  * after
  */
 static void write_callback(struct ev_ctx *ctx, void *arg) {
-    struct client *client = arg;
-    int err = client_write(client);
+    struct http_transaction *http = arg;
+    printf("Write CB: %s %ld\n", http->stream.buf, http->stream.size);
+    int err = http_transaction_write(http);
     switch (err) {
         case NPT_SUCCESS: // OK
             /*
@@ -269,17 +307,26 @@ static void write_callback(struct ev_ctx *ctx, void *arg) {
              * read_callback will be the callback to be used; also reset the
              * read buffer status for the client.
              */
-            client->status = WAITING_DATA;
-            ev_fire_event(ctx, client->conn.fd, EV_READ, read_callback, client);
+            if (http->status == FORWARDING_REQUEST) {
+                log_debug(">>> EV_READ");
+                http->status = WAITING_RESPONSE;
+                http->stream.size = 0;
+                ev_fire_event(ctx, http->pipe[BACKEND].fd,
+                              EV_READ, read_callback, http);
+            } else if (http->status == FORWARDING_RESPONSE) {
+                close_connection(&http->pipe[CLIENT]);
+                close_connection(&http->pipe[BACKEND]);
+                http_transaction_deactivate(http);
+            }
             break;
         case -ERREAGAIN:
-            enqueue_event_write(client);
+            enqueue_event_write(http);
             break;
         default:
             //log_info("Closing connection with %s: %s %i",
             //         client->conn.ip, npterr(client->rc), err);
-            ev_del_fd(ctx, client->conn.fd);
-            client_deactivate(client);
+            ev_del_fd(ctx, http->pipe[CLIENT].fd);
+            http_transaction_deactivate(http);
             break;
     }
 }
@@ -315,16 +362,16 @@ static void accept_callback(struct ev_ctx *ctx, void *data) {
 #if THREADSNR > 0
         pthread_mutex_lock(&mutex);
 #endif
-        struct client *c = memorypool_alloc(server.pool);
+        struct http_transaction *http = memorypool_alloc(server.pool);
 #if THREADSNR > 0
         pthread_mutex_unlock(&mutex);
 #endif
-        c->conn = conn;
-        client_init(c);
-        c->ctx = ctx;
+        http->pipe[CLIENT] = conn;
+        http_transaction_init(http);
+        http->ctx = ctx;
 
         /* Add it to the epoll loop */
-        ev_register_event(ctx, fd, EV_READ, read_callback, c);
+        ev_register_event(ctx, fd, EV_READ, read_callback, http);
 
         log_info("[%p] Connection from %s", (void *) pthread_self(), conn.ip);
     }
@@ -336,15 +383,14 @@ static void accept_callback(struct ev_ctx *ctx, void *data) {
  * context.
  */
 static void read_callback(struct ev_ctx *ctx, void *data) {
-    struct client *c = data;
-    if (c->status == SENDING_DATA)
-        return;
+    struct http_transaction *http = data;
     /*
      * Received a bunch of data from a client, after the creation
      * of an IO event we need to read the bytes and encoding the
      * content according to the protocol
      */
-    int rc = client_read(c);
+    int rc = http_transaction_read(http);
+    log_debug("Read %ld", http->stream.size);
     switch (rc) {
         case NPT_SUCCESS:
             /*
@@ -352,10 +398,7 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
              * link it with the IO event containing the decode payload
              * ready to be processed
              */
-            /* Record last action as of now */
-            c->last_seen = time(NULL);
-            c->status = SENDING_DATA;
-            process_message(ctx, c);
+            PROCESS_STREAM(http);
             break;
         case -ERRCLIENTDC:
         case -ERRSOCKETERR:
@@ -367,21 +410,41 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
              * free resources allocated such as io_event structure and
              * paired payload
              */
+            // TODO
 //            log_error("Closing connection with %s (%s): %s",
 //                      c->client_id, c->conn.ip, npterr(rc));
 #if THREADSNR > 0
             pthread_mutex_lock(&mutex);
 #endif
             // Clean resources
-            ev_del_fd(ctx, c->conn.fd);
+            ev_del_fd(ctx, http->pipe[CLIENT].fd);
 
 #if THREADSNR > 0
             pthread_mutex_unlock(&mutex);
 #endif
-            client_deactivate(c);
+            http_transaction_deactivate(http);
             break;
         case -ERREAGAIN:
-            ev_fire_event(ctx, c->conn.fd, EV_READ, read_callback, c);
+            if (http->encoding == UNSET)
+                http_parse_header(http);
+            if (http->encoding != CHUNKED) {
+                log_debug("Not chunked");
+                PROCESS_STREAM(http);
+            } else {
+                log_debug("EAGAIN, re-read %s", http->stream.buf);
+                log_debug("Last char %c at %li", http->stream.buf[http->stream.size - 5], http->stream.size);
+                if (CHUNKED_COMPLETE(http)) {
+                    log_debug("Complete");
+                    PROCESS_STREAM(http)
+                } else {
+                    if (http->status == WAITING_RESPONSE)
+                        ev_fire_event(ctx, http->pipe[BACKEND].fd,
+                                      EV_READ, read_callback, http);
+                    else if (http->status == WAITING_REQUEST)
+                        ev_fire_event(ctx, http->pipe[CLIENT].fd,
+                                      EV_READ, read_callback, http);
+                }
+            }
             break;
     }
 }
@@ -395,8 +458,49 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
  * called and its outcome, it'll enqueue an event to write a reply or just
  * reset the client state to allow reading some more packets.
  */
-static void process_message(struct ev_ctx *ctx, struct client *c) {
-    log_debug("Processing");
+static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
+    log_debug("Processing %ld %s", http->stream.size, http->stream.buf);
+    if (server.current_backend == 8)
+        server.current_backend = 0;
+    struct backend *backend = &server.backends[server.current_backend++];
+    log_debug("Connecting to %s:%d", backend->host, backend->port);
+    struct connection conn;
+    connection_init(&conn, conf->tls ? server.ssl_ctx : NULL);
+    int fd = open_connection(&conn, backend->host, backend->port);
+    if (fd == 0)
+        return;
+    if (fd < 0) {
+        close_connection(&conn);
+        return;
+    }
+
+    /*
+     * Create a client structure to handle his context
+     * connection
+     */
+#if THREADSNR > 0
+    pthread_mutex_lock(&mutex);
+#endif
+    http->pipe[BACKEND] = conn;
+#if THREADSNR > 0
+    pthread_mutex_unlock(&mutex);
+#endif
+    char *ptr = strstr((const char *) http->stream.buf, "8789");
+    memcpy(ptr, "6090", 4);
+    http->status = FORWARDING_REQUEST;
+    log_debug("Payload: %s %ld", http->stream.buf, http->stream.size);
+
+    /* Add it to the epoll loop */
+    ev_register_event(ctx, fd, EV_WRITE, write_callback, http);
+    //enqueue_event_write(http);
+
+    //ev_fire_event(http->ctx, http->backend.fd, EV_WRITE, write_callback, http);
+}
+
+static void process_response(struct ev_ctx *ctx, struct http_transaction *http) {
+    log_debug("Forwarding response");
+    http->status = FORWARDING_RESPONSE;
+    enqueue_event_write(http);
 }
 
 /*
@@ -442,8 +546,13 @@ static void eventloop_start(void *args) {
  */
 
 /* Fire a write callback to reply after a client request */
-void enqueue_event_write(const struct client *c) {
-    ev_fire_event(c->ctx, c->conn.fd, EV_WRITE, write_callback, (void *) c);
+void enqueue_event_write(const struct http_transaction *http) {
+    if (http->status == FORWARDING_REQUEST)
+        ev_fire_event(http->ctx, http->pipe[BACKEND].fd,
+                      EV_WRITE, write_callback, (void *) http);
+    else if (http->status == FORWARDING_RESPONSE)
+        ev_fire_event(http->ctx, http->pipe[CLIENT].fd,
+                      EV_WRITE, write_callback, (void *) http);
 }
 
 /*
@@ -453,8 +562,17 @@ void enqueue_event_write(const struct client *c) {
 int start_server(const char *addr, const char *port) {
 
     /* Initialize global Npt instance */
-    server.pool = memorypool_new(BASE_CLIENTS_NUM, sizeof(struct client));
+    server.current_backend = 0;
+    server.pool =
+        memorypool_new(BASE_CLIENTS_NUM, sizeof(struct http_transaction));
     server.clients = NULL;
+    server.backends = npt_calloc(8, sizeof(struct backend));
+    for (int i = 0; i < 8; ++i) {
+        strcpy(server.backends[i].host, "127.0.0.1");
+        server.backends[i].port = 6090;
+        server.backends[i].alive = true;
+    }
+    printf("%s\n", server.backends[0].host);
     pthread_mutex_init(&mutex, NULL);
 
     /* Start listening for new connections */
@@ -496,6 +614,7 @@ int start_server(const char *addr, const char *port) {
         openssl_cleanup();
     }
     pthread_mutex_destroy(&mutex);
+    npt_free(server.backends);
 
     log_info("Npt v%s exiting", VERSION);
 

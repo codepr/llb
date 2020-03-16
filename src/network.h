@@ -35,11 +35,7 @@
 #include <sys/types.h>
 #include <sys/timerfd.h>
 
-struct stream {
-    unsigned char *buf;
-    size_t size;
-    size_t capacity;
-};
+struct stream;
 
 /*
  * Connection abstraction struct, provide a transparent interface for
@@ -64,16 +60,65 @@ struct connection {
     SSL_CTX *ctx;
     char ip[INET_ADDRSTRLEN + 6];
     int (*accept) (struct connection *, int);
+    int (*connect) (struct connection *, const char *, int);
     ssize_t (*send) (struct connection *, struct stream *);
     ssize_t (*recv) (struct connection *, struct stream *);
     void (*close) (struct connection *);
 };
+
+struct stream {
+    size_t size;
+    size_t capacity;
+    unsigned char *buf;
+};
+
+/*
+ * The HTTP transaction can be summarized as a roughly simple state machine,
+ * comprised by 2 states:
+ * - WAITING_REQUEST  it's the step required to receive the full byte stream as
+ *                    the encoded length describe. We wait for the effective
+ *                    payload in this state.
+ * - WAITING_RESPONSE the last status, a complete packet has been received and
+ *                    has to be processed and reply back if needed.
+ */
+enum http_status {
+    WAITING_REQUEST,
+    WAITING_RESPONSE,
+    FORWARDING_REQUEST,
+    FORWARDING_RESPONSE
+};
+
+enum content_encoding { UNSET, GENERIC, CHUNKED };
+
+/*
+ * Wrapper structure around an HTTP transaction.
+ * As of now, no allocations will be fired, just a big pool of memory at the
+ * start of the application will serve us a client pool, read and write buffers
+ * are initialized lazily.
+ */
+struct http_transaction {
+    int status; /* Current status of the HTTP transaction */
+    int encoding;
+    struct ev_ctx *ctx; /* An event context reference used to fire write events */
+    struct stream stream;
+    struct connection pipe[2];
+    pthread_mutex_t mutex; /* Inner lock for the HTTP transaction, this avoid
+                            * race conditions on shared parts */
+};
+
+#define CLIENT  0
+#define BACKEND 1
+
+#define client_conn(http) (http)->pipe[CLIENT]
+#define backend_conn(http) (http)->pipe[BACKEND]
 
 void connection_init(struct connection *, const SSL_CTX *);
 
 struct connection *connection_new(const SSL_CTX *);
 
 int accept_connection(struct connection *, int);
+
+int open_connection(struct connection *, const char *, int);
 
 ssize_t send_data(struct connection *, struct stream *);
 
@@ -86,6 +131,8 @@ void close_connection(struct connection *);
  * port
  */
 int make_listen(const char *, const char *);
+
+int make_connection(const char *, int);
 
 /* I/O management functions */
 

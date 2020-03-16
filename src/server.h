@@ -29,6 +29,7 @@
 #define SERVER_H
 
 #include <pthread.h>
+#include <stdatomic.h>
 #include <sys/types.h>
 #include <sys/eventfd.h>
 #include <openssl/ssl.h>
@@ -72,7 +73,8 @@
 #define ERRNOMEM            6
 
 struct backend {
-    const char *url;
+    char host[0xFF];
+    int port;
     bool alive;
 };
 
@@ -84,6 +86,7 @@ struct backend {
  * messages to push out and acks respectively.
  */
 struct server {
+    volatile atomic_int current_backend;
     struct memorypool *pool; /* A memory pool for clients allocation */
     struct client *clients; /* Our clients map, it's a handle pointer for
                              * UTHASH APIs, must be set to NULL
@@ -97,41 +100,43 @@ extern struct server server;
 /*
  * The client actions can be summarized as a roughly simple state machine,
  * comprised by 2 states:
- * - WAITING_DATA   it's the step required to receive the full byte stream as
- *                  the encoded length describe. We wait for the effective
- *                  payload in this state.
+ * - WAITING_REQUEST   it's the step required to receive the full byte stream as
+ *                     the encoded length describe. We wait for the effective
+ *                     payload in this state.
  * - SENDING_DATA   the last status, a complete packet has been received and
  *                  has to be processed and reply back if needed.
  */
-enum client_status {
-    WAITING_DATA,
-    SENDING_DATA
-};
-
-/*
- * Wrapper structure around a connected client, each client can be a publisher
- * or a subscriber, it can be used to track sessions too.
- * As of now, no allocations will be fired, jsut a big pool of memory at the
- * start of the application will serve us a client pool, read and write buffers
- * are initialized lazily.
- *
- * It's an hashable struct which will be tracked during the execution of the
- * application, see https://troydhanson.github.io/uthash/userguide.html.
- */
-struct client {
-    struct ev_ctx *ctx; /* An event context refrence mostly used to fire write events */
-    int status; /* Current status of the client (state machine) */
-    struct stream stream;
-    struct connection conn; /* A connection structure, takes care of plain or
-                             * TLS encrypted communication by using callbacks
-                             */
-    time_t last_seen; /* The timestamp of the last action performed */
-    pthread_mutex_t mutex; /* Inner lock for the client, this avoid race-conditions on shared parts */
-    UT_hash_handle hh; /* UTHASH handle, needed to use UTHASH macros */
-};
+//enum client_status {
+//    WAITING_REQUEST,
+//    WAITING_RESPONSE,
+//    SENDING_DATA
+//};
+//
+///*
+// * Wrapper structure around a connected client, each client can be a publisher
+// * or a subscriber, it can be used to track sessions too.
+// * As of now, no allocations will be fired, jsut a big pool of memory at the
+// * start of the application will serve us a client pool, read and write buffers
+// * are initialized lazily.
+// *
+// * It's an hashable struct which will be tracked during the execution of the
+// * application, see https://troydhanson.github.io/uthash/userguide.html.
+// */
+//struct client {
+//    struct ev_ctx *ctx; /* An event context refrence mostly used to fire write events */
+//    int status; /* Current status of the client (state machine) */
+//    struct stream stream;
+//    struct connection conn; /* A connection structure, takes care of plain or
+//                             * TLS encrypted communication by using callbacks
+//                             */
+//    struct connection backend;
+//    time_t last_seen; /* The timestamp of the last action performed */
+//    pthread_mutex_t mutex; /* Inner lock for the client, this avoid race-conditions on shared parts */
+//    UT_hash_handle hh; /* UTHASH handle, needed to use UTHASH macros */
+//};
 
 int start_server(const char *, const char *);
-void enqueue_event_write(const struct client *);
+void enqueue_event_write(const struct http_transaction *);
 void daemonize(void);
 
 #endif

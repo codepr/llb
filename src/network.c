@@ -163,6 +163,47 @@ int make_listen(const char *host, const char *port) {
 }
 
 /*
+ * Create a socket and use it to connect to the specified host and port
+ */
+int make_connection(const char *host, int port) {
+
+    struct sockaddr_in serveraddr;
+    struct hostent *server;
+
+    /* socket: create the socket */
+    int sfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sfd < 0)
+        goto err;
+
+    /* gethostbyname: get the server's DNS entry */
+    server = gethostbyname(host);
+    if (server == NULL)
+        goto err;
+
+    /* build the server's address */
+    bzero((char *) &serveraddr, sizeof(serveraddr));
+    serveraddr.sin_family = AF_INET;
+    bcopy((char *) server->h_addr,
+          (char *) &serveraddr.sin_addr.s_addr, server->h_length);
+    serveraddr.sin_port = htons(port);
+
+    /* connect: create a connection with the server */
+    if (connect(sfd, (const struct sockaddr *) &serveraddr,
+                sizeof(serveraddr)) < 0)
+        goto err;
+
+    (void) set_nonblocking(sfd);
+    (void) set_tcp_nodelay(sfd);
+
+    return sfd;
+
+err:
+
+    perror("socket(2) opening socket failed");
+    return NPT_FAILURE;
+}
+
+/*
  * Accept a connection and set it NON_BLOCKING and CLOEXEC, optionally also set
  * TCP_NODELAY disabling Nagle's algorithm
  */
@@ -229,18 +270,17 @@ ssize_t stream_recv(int fd, struct stream *stream) {
     ssize_t n = 0;
 
     do {
-
-        if ((n = read(fd, stream->buf, stream->capacity - stream->size)) < 0) {
+        n = read(fd, stream->buf + stream->size, stream->capacity-stream->size);
+        if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 break;
             else
                 goto err;
         }
 
-        if (n == 0)
-            return NPT_SUCCESS;
+        //if (n == 0)
+        //    return NPT_SUCCESS;
 
-        stream->buf += n;
         stream->size += n;
 
         if (stream->size == stream->capacity) {
@@ -392,7 +432,7 @@ ssize_t ssl_stream_recv(SSL *ssl, struct stream *stream) {
     ERR_clear_error();
 
     do {
-        n = SSL_read(ssl, stream->buf, stream->capacity - stream->size);
+        n = SSL_read(ssl, stream->buf + stream->size, stream->capacity - stream->size);
         if (n <= 0) {
             int err = SSL_get_error(ssl, n);
             if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_NONE)
@@ -409,7 +449,6 @@ ssize_t ssl_stream_recv(SSL *ssl, struct stream *stream) {
         if (n == 0)
             return NPT_SUCCESS;
 
-        stream->buf += n;
         stream->size += n;
 
         if (stream->size == stream->capacity) {
@@ -436,6 +475,11 @@ static int conn_accept(struct connection *c, int fd) {
     return ret;
 }
 
+static int conn_connect(struct connection *c, const char *host, int port) {
+    c->fd = make_connection(host, port);
+    return c->fd;
+}
+
 static ssize_t conn_send(struct connection *c, struct stream *stream) {
     return stream_send(c->fd, stream);
 }
@@ -457,6 +501,14 @@ static int conn_tls_accept(struct connection *c, int serverfd) {
     c->ssl = ssl_accept(c->ctx, fd);
     c->fd = fd;
     return fd;
+}
+
+static int conn_tls_connect(struct connection *c, const char *host, int port) {
+    // TODO
+    (void) c;
+    (void) host;
+    (void) port;
+    return NPT_SUCCESS;
 }
 
 static ssize_t conn_tls_send(struct connection *c, struct stream *stream) {
@@ -481,11 +533,13 @@ void connection_init(struct connection *conn, const SSL_CTX *ssl_ctx) {
     if (ssl_ctx) {
         // We need a TLS connection
         conn->accept = conn_tls_accept;
+        conn->connect = conn_tls_connect;
         conn->send = conn_tls_send;
         conn->recv = conn_tls_recv;
         conn->close = conn_tls_close;
     } else {
         conn->accept = conn_accept;
+        conn->connect = conn_connect;
         conn->send = conn_send;
         conn->recv = conn_recv;
         conn->close = conn_close;
@@ -515,6 +569,10 @@ struct connection *connection_new(const SSL_CTX *ssl_ctx) {
  */
 int accept_connection(struct connection *c, int fd) {
     return c->accept(c, fd);
+}
+
+int open_connection(struct connection *c, const char *host, int port) {
+    return c->connect(c, host, port);
 }
 
 ssize_t send_data(struct connection *c, struct stream *stream) {

@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <assert.h>
+#include <pthread.h>
 
 #define NPT_SUCCESS  0
 #define NPT_FAILURE -1
