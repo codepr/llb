@@ -68,25 +68,25 @@ struct server server;
  * the handler module, based on the command it carries and a response will be
  * fired back.
  *
- *                             MAIN THREAD
- *                              [EV_CTX]
+ *                              MAIN THREAD
+ *                               [EV_CTX]
  *
- *    ACCEPT_CALLBACK         READ_CALLBACK         WRITE_CALLBACK
- *  -------------------    ------------------    --------------------
- *        |                        |                       |
- *      ACCEPT                     |                       |
- *        | ---------------------> |                       |
- *        |                  READ AND DECODE               |
- *        |                        |                       |
- *        |                        |                       |
- *        |                     PROCESS                    |
- *        |                        |                       |
- *        |                        |                       |
- *        |                        | --------------------> |
- *        |                        |                     WRITE
- *      ACCEPT                     |                       |
- *        | ---------------------> | <-------------------- |
- *        |                        |                       |
+ *    ACCEPT_CALLBACK          READ_CALLBACK          WRITE_CALLBACK
+ *  -------------------     ------------------      ------------------
+ *          |                        |                       |
+ *        ACCEPT                     |                       |
+ *          | ---------------------> |                       |
+ *          |                  READ AND DECODE               |
+ *          |                        |                       |
+ *          |                        |                       |
+ *          |                     PROCESS                    |
+ *          |                        |                       |
+ *          |                        |                       |
+ *          |                        | --------------------> |
+ *          |                        |                     WRITE
+ *        ACCEPT                     |                       |
+ *          | ---------------------> | <-------------------- |
+ *          |                        |                       |
  *
  * Right now we're using a single thread, but the whole method could be easily
  * distributed across a threadpool, by paying attention to the shared critical
@@ -108,12 +108,15 @@ static void read_callback(struct ev_ctx *, void *);
 static void write_callback(struct ev_ctx *, void *);
 
 /*
- * Processing message function, will be applied on fully formed mqtt packet
+ * Processing request function, will be applied on fully formed request
  * received on read_callback callback
  */
 static void process_request(struct ev_ctx *, struct http_transaction *);
 
 static void process_response(struct ev_ctx *, struct http_transaction *);
+
+/* Periodic routine to perform healthchecks on backends */
+static void backends_healthcheck(struct ev_ctx *, void *);
 
 static inline void http_parse_header(struct http_transaction *);
 
@@ -147,10 +150,6 @@ static inline void http_parse_header(struct http_transaction *http) {
 //            return "Client disconnected";
 //        case -ERRSOCKETERR:
 //            return strerror(errno);
-//        case -ERRPACKETERR:
-//            return "Error reading packet";
-//        case -ERRMAXREQSIZE:
-//            return "Packet sent exceeds max size accepted";
 //        case -ERREAGAIN:
 //            return "Socket FD EAGAIN";
 //        default:
@@ -163,6 +162,20 @@ static inline void http_parse_header(struct http_transaction *http) {
  *  Cron tasks, to be repeated at fixed time intervals
  * ====================================================
  */
+
+static void backends_healthcheck(struct ev_ctx *ctx, void *data) {
+    (void) data;
+    int fd = 0;
+    for (int i = 0; i < 8; ++i) {
+        fd = make_connection(server.backends[i].host, server.backends[i].port);
+        if (fd < 0) {
+            server.backends[i].alive = false;
+        } else {
+            server.backends[i].alive = true;
+            close(fd);
+        }
+    }
+}
 
 /*
  * ======================================================
@@ -197,13 +210,14 @@ static void http_transaction_deactivate(struct http_transaction *http) {
     pthread_mutex_lock(&http->mutex);
 #endif
 
-    log_debug("Deactivate");
     http->stream.size = 0;
     http->encoding = UNSET;
     http->status = WAITING_REQUEST;
+    ev_del_fd(http->ctx, http->pipe[CLIENT].fd);
+    ev_del_fd(http->ctx, http->pipe[BACKEND].fd);
+    close_connection(&http->pipe[CLIENT]);
+    close_connection(&http->pipe[BACKEND]);
     memset(http->stream.buf, 0x00, http->stream.capacity);
-    //close_connection(&http->conn);
-    //HASH_DEL(server.clients, client);
     memorypool_free(server.pool, http);
 
 #if THREADSNR > 0
@@ -243,7 +257,7 @@ static inline int http_transaction_read(struct http_transaction *http) {
     if (errno != EAGAIN && errno != EWOULDBLOCK && nread <= 0)
         return nread == -1 ? -ERRSOCKETERR : -ERRCLIENTDC;
 
-    if ((errno == EAGAIN || errno == EWOULDBLOCK))
+    if (errno == EAGAIN || errno == EWOULDBLOCK)
         return -ERREAGAIN;
 
     return NPT_SUCCESS;
@@ -308,14 +322,11 @@ static void write_callback(struct ev_ctx *ctx, void *arg) {
              * read buffer status for the client.
              */
             if (http->status == FORWARDING_REQUEST) {
-                log_debug(">>> EV_READ");
                 http->status = WAITING_RESPONSE;
                 http->stream.size = 0;
                 ev_fire_event(ctx, http->pipe[BACKEND].fd,
                               EV_READ, read_callback, http);
             } else if (http->status == FORWARDING_RESPONSE) {
-                close_connection(&http->pipe[CLIENT]);
-                close_connection(&http->pipe[BACKEND]);
                 http_transaction_deactivate(http);
             }
             break;
@@ -323,9 +334,6 @@ static void write_callback(struct ev_ctx *ctx, void *arg) {
             enqueue_event_write(http);
             break;
         default:
-            //log_info("Closing connection with %s: %s %i",
-            //         client->conn.ip, npterr(client->rc), err);
-            ev_del_fd(ctx, http->pipe[CLIENT].fd);
             http_transaction_deactivate(http);
             break;
     }
@@ -390,7 +398,6 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
      * content according to the protocol
      */
     int rc = http_transaction_read(http);
-    log_debug("Read %ld", http->stream.size);
     switch (rc) {
         case NPT_SUCCESS:
             /*
@@ -402,26 +409,12 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
             break;
         case -ERRCLIENTDC:
         case -ERRSOCKETERR:
-        case -ERRPACKETERR:
-        case -ERRMAXREQSIZE:
             /*
              * We got an unexpected error or a disconnection from the
              * client side, remove client from the global map and
              * free resources allocated such as io_event structure and
              * paired payload
              */
-            // TODO
-//            log_error("Closing connection with %s (%s): %s",
-//                      c->client_id, c->conn.ip, npterr(rc));
-#if THREADSNR > 0
-            pthread_mutex_lock(&mutex);
-#endif
-            // Clean resources
-            ev_del_fd(ctx, http->pipe[CLIENT].fd);
-
-#if THREADSNR > 0
-            pthread_mutex_unlock(&mutex);
-#endif
             http_transaction_deactivate(http);
             break;
         case -ERREAGAIN:
@@ -464,37 +457,25 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
         server.current_backend = 0;
     struct backend *backend = &server.backends[server.current_backend++];
     log_debug("Connecting to %s:%d", backend->host, backend->port);
-    struct connection conn;
-    connection_init(&conn, conf->tls ? server.ssl_ctx : NULL);
-    int fd = open_connection(&conn, backend->host, backend->port);
-    if (fd == 0)
-        return;
-    if (fd < 0) {
-        close_connection(&conn);
-        return;
-    }
-
     /*
      * Create a client structure to handle his context
      * connection
      */
-#if THREADSNR > 0
-    pthread_mutex_lock(&mutex);
-#endif
-    http->pipe[BACKEND] = conn;
-#if THREADSNR > 0
-    pthread_mutex_unlock(&mutex);
-#endif
+    connection_init(&http->pipe[BACKEND], conf->tls ? server.ssl_ctx : NULL);
+    int fd = open_connection(&http->pipe[BACKEND], backend->host, backend->port);
+    if (fd == 0)
+        return;
+    if (fd < 0) {
+        close_connection(&http->pipe[BACKEND]);
+        return;
+    }
+
     char *ptr = strstr((const char *) http->stream.buf, "8789");
     memcpy(ptr, "6090", 4);
     http->status = FORWARDING_REQUEST;
-    log_debug("Payload: %s %ld", http->stream.buf, http->stream.size);
 
     /* Add it to the epoll loop */
     ev_register_event(ctx, fd, EV_WRITE, write_callback, http);
-    //enqueue_event_write(http);
-
-    //ev_fire_event(http->ctx, http->backend.fd, EV_WRITE, write_callback, http);
 }
 
 static void process_response(struct ev_ctx *ctx, struct http_transaction *http) {
@@ -529,11 +510,8 @@ static void eventloop_start(void *args) {
     // Register listening FD with accept callback
     ev_register_event(&ctx, sfd, EV_READ, accept_callback, &sfd);
     // Register periodic tasks
-    //if (loop_data->cronjobs == true) {
-    //    ev_register_cron(&ctx, publish_stats, NULL, conf->stats_pub_interval, 0);
-    //    ev_register_cron(&ctx, inflight_msg_check, NULL, 1, 0);
-    //    ev_register_cron(&ctx, persist_session, NULL, 1, 0);
-    //}
+    if (loop_data->cronjobs == true)
+        ev_register_cron(&ctx, backends_healthcheck, NULL, 1, 0);
     // Start the loop, blocking call
     ev_run(&ctx);
     ev_destroy(&ctx);
@@ -572,7 +550,6 @@ int start_server(const char *addr, const char *port) {
         server.backends[i].port = 6090;
         server.backends[i].alive = true;
     }
-    printf("%s\n", server.backends[0].host);
     pthread_mutex_init(&mutex, NULL);
 
     /* Start listening for new connections */

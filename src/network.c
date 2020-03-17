@@ -187,17 +187,20 @@ int make_connection(const char *host, int port) {
           (char *) &serveraddr.sin_addr.s_addr, server->h_length);
     serveraddr.sin_port = htons(port);
 
+    (void) set_nonblocking(sfd);
+    (void) set_tcp_nodelay(sfd);
+
     /* connect: create a connection with the server */
     if (connect(sfd, (const struct sockaddr *) &serveraddr,
                 sizeof(serveraddr)) < 0)
         goto err;
 
-    (void) set_nonblocking(sfd);
-    (void) set_tcp_nodelay(sfd);
-
     return sfd;
 
 err:
+
+    if (errno == EINPROGRESS)
+        return sfd;
 
     perror("socket(2) opening socket failed");
     return NPT_FAILURE;

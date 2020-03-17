@@ -62,7 +62,7 @@
 
 // Default parameters
 
-#define VERSION                     "0.17.0"
+#define VERSION                     "0.0.1"
 #define DEFAULT_LOG_LEVEL           DEBUG
 #define DEFAULT_CONF_PATH           "/etc/npt/npt.conf"
 #define DEFAULT_HOSTNAME            "127.0.0.1"
