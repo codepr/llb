@@ -112,5 +112,6 @@ int parse_int(const char *);
 void config_set_default(void);
 void config_print(void);
 int config_load(const char *);
+void config_unload(void);
 
 #endif

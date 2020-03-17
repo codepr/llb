@@ -344,12 +344,15 @@ void config_print(void) {
     }
     log_info("Npt v%s is starting", VERSION);
     log_info("Network settings:");
-    log_info("\tFrontends:");
-    for (int i = 0; i < config.frontends_nr; ++i) {
-        log_info("\tAddress: %s", config.frontends[i].host);
-        log_info("\tPort: %i", config.frontends[i].port);
-    }
     log_info("\tTcp backlog: %d", config.tcp_backlog);
+    log_info("  Frontends:");
+    for (int i = 0; i < config.frontends_nr; ++i)
+        log_info("\t%s:%i", config.frontends[i].host, config.frontends[i].port);
+    if (config.backends_nr > 0) {
+        log_info("  Backends:");
+        for (int i = 0; i < config.backends_nr; ++i)
+            log_info("\t%s:%i", config.backends[i].host, config.backends[i].port);
+    }
     if (config.tls == true) config_print_tls_versions();
     log_info("Logging:");
     log_info("\tlevel: %s", llevel);

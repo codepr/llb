@@ -114,7 +114,7 @@ int main (int argc, char **argv) {
     start_server(conf->frontends, conf->frontends_nr);
 
     npt_log_close();
-    npt_config_unload();
+    config_unload();
 
     return 0;
 }

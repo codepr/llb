@@ -173,7 +173,7 @@ static const char *npterr(int rc) {
 static void backends_healthcheck(struct ev_ctx *ctx, void *data) {
     (void) data;
     int fd = 0;
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < conf->backends_nr; ++i) {
         fd = make_connection(server.backends[i].host, server.backends[i].port);
         if (fd < 0) {
             server.backends[i].alive = false;
@@ -445,10 +445,10 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
  * reset the client state to allow reading some more packets.
  */
 static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
-    volatile atomic_int next = server.current_backend++ % 8;
+    volatile atomic_int next = server.current_backend++ % conf->backends_nr;
     struct backend *backend = &server.backends[next];
     while (backend->alive == false) {
-        next = server.current_backend++ % 8;
+        next = server.current_backend++ % conf->backends_nr;
         backend = &server.backends[next];
     }
     /*
@@ -536,12 +536,7 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
     server.pool =
         memorypool_new(MAX_HTTP_TRANSACTIONS, sizeof(struct http_transaction));
     server.clients = NULL;
-    server.backends = npt_calloc(8, sizeof(struct backend));
-    for (int i = 0; i < 8; ++i) {
-        strcpy(server.backends[i].host, "127.0.0.1");
-        server.backends[i].port = 6090;
-        server.backends[i].alive = true;
-    }
+    server.backends = conf->backends;
 
     /* Setup SSL in case of flag true */
     if (conf->tls == true) {
@@ -588,7 +583,6 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
         openssl_cleanup();
     }
     npt_free(loop_start.fds);
-    npt_free(server.backends);
 
     log_info("Npt v%s exiting", VERSION);
 
