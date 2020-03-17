@@ -102,8 +102,6 @@ struct http_transaction {
     struct ev_ctx *ctx; /* An event context reference used to fire write events */
     struct stream stream;
     struct connection pipe[2];
-    pthread_mutex_t mutex; /* Inner lock for the HTTP transaction, this avoid
-                            * race conditions on shared parts */
 };
 
 #define CLIENT  0

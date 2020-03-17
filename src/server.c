@@ -144,18 +144,18 @@ static inline void http_parse_header(struct http_transaction *http) {
 }
 
 /* Simple error_code to string function, to be refined */
-//static const char *npterr(int rc) {
-//    switch (rc) {
-//        case -ERRCLIENTDC:
-//            return "Client disconnected";
-//        case -ERRSOCKETERR:
-//            return strerror(errno);
-//        case -ERREAGAIN:
-//            return "Socket FD EAGAIN";
-//        default:
-//            return "Unknown error";
-//    }
-//}
+static const char *npterr(int rc) {
+    switch (rc) {
+        case -ERRCLIENTDC:
+            return "Client disconnected";
+        case -ERRSOCKETERR:
+            return strerror(errno);
+        case -ERREAGAIN:
+            return "Socket FD EAGAIN";
+        default:
+            return "Unknown error";
+    }
+}
 
 /*
  * ====================================================
@@ -192,10 +192,10 @@ static void http_transaction_init(struct http_transaction *http) {
     http->status = WAITING_REQUEST;
     http->encoding = UNSET;
     http->stream.size = 0;
-    http->stream.capacity = 2048;
+    http->stream.capacity = MAX_HTTP_TRANSACTION_SIZE;
     if (!http->stream.buf)
-        http->stream.buf = npt_calloc(2048, sizeof(unsigned char));
-    pthread_mutex_init(&http->mutex, NULL);
+        http->stream.buf =
+            npt_calloc(MAX_HTTP_TRANSACTION_SIZE, sizeof(unsigned char));
 }
 
 /*
@@ -205,11 +205,6 @@ static void http_transaction_init(struct http_transaction *http) {
  * allow the clients memory pool to reclaim it
  */
 static void http_transaction_deactivate(struct http_transaction *http) {
-
-#if THREADSNR > 0
-    pthread_mutex_lock(&http->mutex);
-#endif
-
     http->stream.size = 0;
     http->encoding = UNSET;
     http->status = WAITING_REQUEST;
@@ -218,11 +213,12 @@ static void http_transaction_deactivate(struct http_transaction *http) {
     close_connection(&http->pipe[CLIENT]);
     close_connection(&http->pipe[BACKEND]);
     memset(http->stream.buf, 0x00, http->stream.capacity);
-    memorypool_free(server.pool, http);
-
 #if THREADSNR > 0
-    pthread_mutex_unlock(&http->mutex);
-    pthread_mutex_destroy(&http->mutex);
+    pthread_mutex_lock(&mutex);
+#endif
+    memorypool_free(server.pool, http);
+#if THREADSNR > 0
+    pthread_mutex_unlock(&mutex);
 #endif
 }
 
@@ -270,33 +266,25 @@ static inline int http_transaction_read(struct http_transaction *http) {
  * meaning we cannot write anymore for the current cycle.
  */
 static inline int http_transaction_write(struct http_transaction *http) {
+
     ssize_t wrote = 0;
-#if THREADSNR > 0
-    pthread_mutex_lock(&http->mutex);
-#endif
-    log_debug("Forwarding %d (%ld bytes)", http->status, http->stream.size);
+
     if (http->status == FORWARDING_REQUEST)
         wrote = send_data(&http->pipe[BACKEND], &http->stream);
     else if (http->status == FORWARDING_RESPONSE)
         wrote = send_data(&http->pipe[CLIENT], &http->stream);
+
     if (errno != EAGAIN && errno != EWOULDBLOCK && wrote < 0)
         goto clientdc;
-#if THREADSNR > 0
-    pthread_mutex_unlock(&http->mutex);
-#endif
+
+    //if (errno == EAGAIN || errno == EWOULDBLOCK)
+    //    return -ERREAGAIN;
+
     return NPT_SUCCESS;
 
 clientdc:
-#if THREADSNR > 0
-    pthread_mutex_unlock(&http->mutex);
-#endif
-    return -ERRSOCKETERR;
 
-//eagain:
-#if THREADSNR > 0
-    pthread_mutex_unlock(&http->mutex);
-#endif
-    return -ERREAGAIN;
+    return -ERRSOCKETERR;
 }
 
 /*
@@ -312,7 +300,6 @@ clientdc:
  */
 static void write_callback(struct ev_ctx *ctx, void *arg) {
     struct http_transaction *http = arg;
-    printf("Write CB: %s %ld\n", http->stream.buf, http->stream.size);
     int err = http_transaction_write(http);
     switch (err) {
         case NPT_SUCCESS: // OK
@@ -381,7 +368,7 @@ static void accept_callback(struct ev_ctx *ctx, void *data) {
         /* Add it to the epoll loop */
         ev_register_event(ctx, fd, EV_READ, read_callback, http);
 
-        log_info("[%p] Connection from %s", (void *) pthread_self(), conn.ip);
+        //log_info("[%p] Connection from %s", (void *) pthread_self(), conn.ip);
     }
 }
 
@@ -415,19 +402,17 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
              * free resources allocated such as io_event structure and
              * paired payload
              */
+            log_error("Closing connection with %s -> %s: %s",
+                      http->pipe[CLIENT], http->pipe[BACKEND], npterr(rc));
             http_transaction_deactivate(http);
             break;
         case -ERREAGAIN:
             if (http->encoding == UNSET)
                 http_parse_header(http);
             if (http->encoding != CHUNKED) {
-                log_debug("Not chunked");
                 PROCESS_STREAM(http);
             } else {
-                log_debug("EAGAIN, re-read %s", http->stream.buf);
-                log_debug("Last char %c at %li", http->stream.buf[http->stream.size - 5], http->stream.size);
                 if (CHUNKED_COMPLETE(http)) {
-                    log_debug("Complete");
                     PROCESS_STREAM(http)
                 } else {
                     if (http->status == WAITING_RESPONSE)
@@ -452,11 +437,16 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
  * reset the client state to allow reading some more packets.
  */
 static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
-    log_debug("Processing %ld %s", http->stream.size, http->stream.buf);
     if (server.current_backend == 8)
         server.current_backend = 0;
     struct backend *backend = &server.backends[server.current_backend++];
-    log_debug("Connecting to %s:%d", backend->host, backend->port);
+    while (backend->alive == false) {
+        backend = &server.backends[server.current_backend++];
+        if (server.current_backend == 8)
+            server.current_backend = 0;
+    }
+    log_debug("Connecting to %s:%d (%i)",
+              backend->host, backend->port, server.current_backend);
     /*
      * Create a client structure to handle his context
      * connection
@@ -470,6 +460,7 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
         return;
     }
 
+    //log_debug("Processing request (%i) %s", http->stream.size, http->stream.buf);
     char *ptr = strstr((const char *) http->stream.buf, "8789");
     memcpy(ptr, "6090", 4);
     http->status = FORWARDING_REQUEST;
@@ -479,7 +470,7 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
 }
 
 static void process_response(struct ev_ctx *ctx, struct http_transaction *http) {
-    log_debug("Forwarding response");
+    log_debug("Forwarding response (%i) %s", http->stream.size, http->stream.buf);
     http->status = FORWARDING_RESPONSE;
     enqueue_event_write(http);
 }
@@ -539,10 +530,11 @@ void enqueue_event_write(const struct http_transaction *http) {
  */
 int start_server(const char *addr, const char *port) {
 
+    log_info("%lu", sizeof(struct http_transaction));
     /* Initialize global Npt instance */
     server.current_backend = 0;
     server.pool =
-        memorypool_new(BASE_CLIENTS_NUM, sizeof(struct http_transaction));
+        memorypool_new(MAX_HTTP_TRANSACTIONS, sizeof(struct http_transaction));
     server.clients = NULL;
     server.backends = npt_calloc(8, sizeof(struct backend));
     for (int i = 0; i < 8; ++i) {
@@ -550,7 +542,6 @@ int start_server(const char *addr, const char *port) {
         server.backends[i].port = 6090;
         server.backends[i].alive = true;
     }
-    pthread_mutex_init(&mutex, NULL);
 
     /* Start listening for new connections */
     int sfd = make_listen(addr, port);
@@ -590,7 +581,6 @@ int start_server(const char *addr, const char *port) {
         SSL_CTX_free(server.ssl_ctx);
         openssl_cleanup();
     }
-    pthread_mutex_destroy(&mutex);
     npt_free(server.backends);
 
     log_info("Npt v%s exiting", VERSION);
