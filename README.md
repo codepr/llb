@@ -1,6 +1,8 @@
 llb
 ===
 
+![llb CI](https://github.com/codepr/llb/workflows/llb%20CI/badge.svg?branch=master)
+
 (**L**)ittle(**L**)oad(**B**)alancer, a dead simple event-driven load-balancer.
 Supports Linux and (arguably) OSX through epoll and poll/select (kqueue
 planned) as fallback, it uses an event-loop library borrowed from
