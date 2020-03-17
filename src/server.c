@@ -536,7 +536,6 @@ void enqueue_event_write(const struct http_transaction *http) {
  */
 int start_server(const char *addr, const char *port) {
 
-    log_info("%lu", sizeof(struct http_transaction));
     /* Initialize global Npt instance */
     server.current_backend = ATOMIC_VAR_INIT(0);
     server.pool =

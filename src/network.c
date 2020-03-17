@@ -87,7 +87,7 @@ err:
  * Set TCP_NODELAY flag to true, disabling Nagle's algorithm, no more waiting
  * for incoming packets on the buffer
  */
-static inline int set_tcp_nodelay(int fd) {
+static inline int set_tcpnodelay(int fd) {
     return setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &(int) {1}, sizeof(int));
 }
 
@@ -152,7 +152,7 @@ int make_listen(const char *host, const char *port) {
     (void) set_cloexec(sfd);
 
     // Set TCP_NODELAY only for TCP sockets
-    (void) set_tcp_nodelay(sfd);
+    (void) set_tcpnodelay(sfd);
 
     if ((listen(sfd, conf->tcp_backlog)) == -1) {
         perror("listen");
@@ -188,7 +188,7 @@ int make_connection(const char *host, int port) {
     serveraddr.sin_port = htons(port);
 
     (void) set_nonblocking(sfd);
-    (void) set_tcp_nodelay(sfd);
+    (void) set_tcpnodelay(sfd);
 
     /* connect: create a connection with the server */
     if (connect(sfd, (const struct sockaddr *) &serveraddr,
@@ -227,7 +227,7 @@ static int accept_conn(int sfd, char *ip) {
     (void) set_cloexec(clientsock);
 
     // Set TCP_NODELAY only for TCP sockets
-    (void) set_tcp_nodelay(clientsock);
+    (void) set_tcpnodelay(clientsock);
 
     char ip_buff[INET_ADDRSTRLEN];
     if (inet_ntop(AF_INET, &addr.sin_addr, ip_buff, sizeof(ip_buff)) == NULL) {
