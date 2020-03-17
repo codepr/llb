@@ -50,8 +50,9 @@
 #define EVENTLOOP_TIMEOUT       -1
 
 /*
- * Initial memory allocation for clients on server start-up, it should be
- * equal to ~40 MB, read and write buffers are initialized lazily
+ * Initial memory allocation for HTTP transactions on server start-up, it
+ * should be equal to roughly ~100 MB, read and write buffers are initialized
+ * lazily
  */
 #define MAX_HTTP_TRANSACTIONS  1024 * 512
 
@@ -60,12 +61,8 @@
 /*
  * Error codes for packet reception, signaling respectively
  * - client disconnection
- * - error reading packet
- * - error packet sent exceeds size defined by configuration (generally default
- *   to 2MB)
  * - error EAGAIN from a non-blocking read/write function
  * - error sending/receiving data on a connected socket
- * - error OUT OF MEMORY
  */
 #define ERRCLIENTDC         1
 #define ERREAGAIN           2
@@ -94,25 +91,24 @@ struct backend {
 
 /*
  * Main structure, a global instance will be instantiated at start, tracking
- * topics, connected clients and registered closures.
+ * the current backend for the round-robing algorithm to load-balance the
+ * traffic between backends, accessed by the reference `backends`.
  *
- * pending_msgs and pendings_acks are two arrays used to track remaining
- * messages to push out and acks respectively.
+ * A memory pool is used to initially allocate the HTTP transactions pool to
+ * avoid malloc'ing every connection. Finally a SSL_CTX pointer is initialized
+ * at the startup as well for the TLS communication between frontends and
+ * clients.
  */
 struct server {
     volatile atomic_int current_backend;
     struct memorypool *pool; /* A memory pool for clients allocation */
-    struct client *clients; /* Our clients map, it's a handle pointer for
-                             * UTHASH APIs, must be set to NULL
-                             */
-    struct backend *backends;
+    struct backend *backends; /* A pointer to the backends registered */
     SSL_CTX *ssl_ctx; /* Application TLS context */
 };
 
 extern struct server server;
 
 int start_server(const struct frontend *, int);
-void enqueue_event_write(const struct http_transaction *);
 void daemonize(void);
 
 #endif

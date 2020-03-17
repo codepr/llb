@@ -41,17 +41,18 @@ pthread_mutex_t mutex;
 
 /*
  * Auxiliary structure to be used as init argument for eventloop, fd is the
- * listening socket we want to share between multiple instances, cronjobs is
- * just a flag to signal if we want to register cronjobs on that particular
- * instance or not (to not repeat useless cron jobs on multiple threads)
+ * listening sockets array, the same number of the frontends number, we want to
+ * share between multiple instances, cronjobs is just a flag to signal if we
+ * want to register cronjobs on that particular instance or not (to not repeat
+ * useless cron jobs on multiple threads)
  */
-struct listen_payload {
-    int *fds;
-    int frontends_nr;
-    bool cronjobs;
-};
+struct listen_payload { int *fds; int frontends_nr; bool cronjobs; };
 
-/* Broker global instance, contains the topic trie and the clients hashtable */
+/*
+ * Server global instance, contains the backends reference, the current
+ * selected one, a memorypool for the transactions and the SSL context for the
+ * TLS communication.
+ */
 struct server server;
 
 /*
@@ -107,6 +108,10 @@ static void accept_callback(struct ev_ctx *, void *);
 static void read_callback(struct ev_ctx *, void *);
 
 static void write_callback(struct ev_ctx *, void *);
+
+static void enqueue_event_read(const struct http_transaction *);
+
+static void enqueue_event_write(const struct http_transaction *);
 
 /*
  * Processing request function, will be applied on fully formed request
@@ -319,8 +324,7 @@ static void write_callback(struct ev_ctx *ctx, void *arg) {
             if (http->status == FORWARDING_REQUEST) {
                 http->status = WAITING_RESPONSE;
                 http->stream.size = 0;
-                ev_fire_event(ctx, http->pipe[BACKEND].fd,
-                              EV_READ, read_callback, http);
+                enqueue_event_read(http);
             } else if (http->status == FORWARDING_RESPONSE) {
                 http_transaction_deactivate(http);
             }
@@ -420,16 +424,10 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
             if (http->encoding != CHUNKED) {
                 PROCESS_STREAM(http);
             } else {
-                if (CHUNKED_COMPLETE(http)) {
+                if (CHUNKED_COMPLETE(http))
                     PROCESS_STREAM(http)
-                } else {
-                    if (http->status == WAITING_RESPONSE)
-                        ev_fire_event(ctx, http->pipe[BACKEND].fd,
-                                      EV_READ, read_callback, http);
-                    else if (http->status == WAITING_REQUEST)
-                        ev_fire_event(ctx, http->pipe[CLIENT].fd,
-                                      EV_READ, read_callback, http);
-                }
+                else
+                    enqueue_event_read(http);
             }
             break;
     }
@@ -483,6 +481,10 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
     ev_register_event(ctx, fd, EV_WRITE, write_callback, http);
 }
 
+/*
+ * The response received back from a backend, meant to be returned to the
+ * requesting client, so just schedule a write back to the client
+ */
 static void process_response(struct ev_ctx *ctx, struct http_transaction *http) {
     http->status = FORWARDING_RESPONSE;
     enqueue_event_write(http);
@@ -498,11 +500,10 @@ static void stop_handler(struct ev_ctx *ctx, void *arg) {
 }
 
 /*
- * IO worker function, wait for events on a dedicated epoll descriptor which
- * is shared among multiple threads for input and output only, following the
- * normal EPOLL semantic, EPOLLIN for incoming bytes to be unpacked and
- * processed by a worker thread, EPOLLOUT for bytes incoming from a worker
- * thread, ready to be delivered out.
+ * Entry point function for the event loop, register all the frontends
+ * descriptors for the ACCEPT callback, the event_fd member of the global
+ * configuration to gracefull close each loop and only in *one thread* register
+ * the healthcheck routine to be called once every second.
  */
 static void eventloop_start(void *args) {
     struct listen_payload *loop_data = args;
@@ -528,8 +529,18 @@ static void eventloop_start(void *args) {
  * ===================
  */
 
+/* Fire a read callback to react accordingly to descriptor ready to be read */
+static void enqueue_event_read(const struct http_transaction *http) {
+    if (http->status == WAITING_REQUEST)
+        ev_fire_event(http->ctx, http->pipe[CLIENT].fd,
+                      EV_READ, read_callback, (void *) http);
+    else if (http->status == WAITING_RESPONSE)
+        ev_fire_event(http->ctx, http->pipe[BACKEND].fd,
+                      EV_READ, read_callback, (void *) http);
+}
+
 /* Fire a write callback to reply after a client request */
-void enqueue_event_write(const struct http_transaction *http) {
+static void enqueue_event_write(const struct http_transaction *http) {
     if (http->status == FORWARDING_REQUEST)
         ev_fire_event(http->ctx, http->pipe[BACKEND].fd,
                       EV_WRITE, write_callback, (void *) http);
@@ -548,7 +559,6 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
     server.current_backend = ATOMIC_VAR_INIT(0);
     server.pool =
         memorypool_new(MAX_HTTP_TRANSACTIONS, sizeof(struct http_transaction));
-    server.clients = NULL;
     server.backends = conf->backends;
 
     /* Setup SSL in case of flag true */

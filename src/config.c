@@ -183,6 +183,15 @@ static void add_config_value(const char *key, const char *value) {
                 token = strtok(NULL, ",");
             }
         }
+    } else if (STREQ("load_balancing", key, klen) == true) {
+        if (STREQ("round-robin", value, 11)
+            || STREQ("round robin", value, 11)
+            || STREQ("roundrobin", value, 10))
+            config.load_balancing = ROUND_ROBIN;
+        else if (STREQ("hash-balancing", value, 14)
+                 || STREQ("hash balancing", value, 14)
+                 || STREQ("hashbalancing", value, 13))
+            config.load_balancing = HASH_BALANCING;
     }
 }
 
