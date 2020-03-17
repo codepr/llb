@@ -42,10 +42,11 @@ struct stream;
  * connection handling, taking care of communication layer, being it encrypted
  * or plain, by setting the right callbacks to be used.
  *
- * The 4 main operations reflected by those callbacks are the ones that can be
+ * The 5 main operations reflected by those callbacks are the ones that can be
  * performed on every FD:
  *
  * - accept
+ * - connect
  * - read
  * - write
  * - close
@@ -66,6 +67,11 @@ struct connection {
     void (*close) (struct connection *);
 };
 
+/*
+ * Simple buffer-like structure, handling an array of bytes tracking it's full
+ * capacity and the size of the currently filled cells. Named stream cause I
+ * thought it fitted better in the HTTP transaction concept.
+ */
 struct stream {
     size_t size;
     size_t capacity;
@@ -75,11 +81,18 @@ struct stream {
 /*
  * The HTTP transaction can be summarized as a roughly simple state machine,
  * comprised by 2 states:
- * - WAITING_REQUEST  it's the step required to receive the full byte stream as
- *                    the encoded length describe. We wait for the effective
- *                    payload in this state.
- * - WAITING_RESPONSE the last status, a complete packet has been received and
- *                    has to be processed and reply back if needed.
+ * - WAITING_REQUEST     It's the state required to receive the full byte stream
+ *                       from a newly connected client. We wait for the
+ *                       effective header + body in this state, which will
+ *                       subsequently forwarded toward a backend.
+ * - FORWARDING_REQUEST  Second step of the state machine, once a request is
+ *                       received from a connected client, we want to forward it
+ *                       to an alive backend
+ * - WAITING_RESPONSE    Third step, we wait for a a complete response from a
+ *                       connected backend, which must be forwarded back to the
+ *                       requesting client.
+ * - FORWARDING_RESPONSE Last state, the complete response received by the
+ *                       backend must be sent to the original requesting client
  */
 enum http_status {
     WAITING_REQUEST,
@@ -88,6 +101,11 @@ enum http_status {
     FORWARDING_RESPONSE
 };
 
+/*
+ * We just ignore all gzip, compressed etc. encoding for now as we only care
+ * for chunked or non-chunked packet in order to known how many bytes we need
+ * to read on each transaction
+ */
 enum content_encoding { UNSET, GENERIC, CHUNKED };
 
 /*

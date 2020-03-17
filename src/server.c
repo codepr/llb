@@ -175,6 +175,11 @@ static const char *llberr(int rc) {
  * ====================================================
  */
 
+/*
+ * Checks for health status of the backends, as of now it's pretty simple, if
+ * a connection go well to the target backend, we flag it alive, otherwise it's
+ * flagged dead
+ */
 static void backends_healthcheck(struct ev_ctx *ctx, void *data) {
     (void) data;
     int fd = 0;
@@ -211,10 +216,10 @@ static void http_transaction_init(struct http_transaction *http) {
 }
 
 /*
- * As we really don't want to completely de-allocate a client in favor of
- * making it reusable by another connection we simply deactivate it according
- * to its state (e.g. if it's a clean_session connected client or not) and we
- * allow the clients memory pool to reclaim it
+ * As we really don't want to completely de-allocate an HTTP transaction in
+ * favor of making it reusable by another connection we simply deactivate it
+ * according to its state (e.g. if it's a clean_session connected client or
+ * not) and we allow the http memory pool to reclaim it
  */
 static void http_transaction_deactivate(struct http_transaction *http) {
     http->stream.size = 0;
@@ -235,19 +240,17 @@ static void http_transaction_deactivate(struct http_transaction *http) {
 }
 
 /*
- * Parse packet header, it is required at least the Fixed Header of each
- * packed, which is contained in the first 2 bytes in order to read packet
- * type and total length that we need to recv to complete the packet.
+ * Read a stream of bytes into the stream of an http_transaction. Based on the
+ * state of the transaction, be it a request from a client or a response from a
+ * backend, it calls read on the right descriptor (or side of the pipe member).
  *
  * This function accept a socket fd, a buffer to read incoming streams of
- * bytes and a pointer to the decoded fixed header that will be set in the
- * final parsed packet.
+ * bytes all in a pointer to an http_transaction structure.
  *
- * - c: A struct client pointer, contains the FD of the requesting client
- *      as well as his SSL context in case of TLS communication. Also it store
- *      the reading buffer to be used for incoming byte-streams, tracking
- *      read, to be read and reading position taking into account the bytes
- *      required to encode the packet length.
+ * - http: A struct http_transaction pointer, contains the connection structure
+ *         with the of the requesting client as well as his SSL context in case
+ *         of TLS communication. Also it store the reading buffer to be used for
+ *         incoming byte-streams.
  */
 static inline int http_transaction_read(struct http_transaction *http) {
 
@@ -363,8 +366,8 @@ static void accept_callback(struct ev_ctx *ctx, void *data) {
         }
 
         /*
-         * Create a client structure to handle his context
-         * connection
+         * Create a connection structure to handle the client context of the
+         * communication channel.
          */
 #if THREADSNR > 0
         pthread_mutex_lock(&mutex);
@@ -379,8 +382,6 @@ static void accept_callback(struct ev_ctx *ctx, void *data) {
 
         /* Add it to the epoll loop */
         ev_register_event(ctx, fd, EV_READ, read_callback, http);
-
-        //log_info("[%p] Connection from %s", (void *) pthread_self(), conn.ip);
     }
 }
 
@@ -392,17 +393,18 @@ static void accept_callback(struct ev_ctx *ctx, void *data) {
 static void read_callback(struct ev_ctx *ctx, void *data) {
     struct http_transaction *http = data;
     /*
-     * Received a bunch of data from a client, after the creation
-     * of an IO event we need to read the bytes and encoding the
-     * content according to the protocol
+     * Received a bunch of data from a client,  we need to read the bytes and
+     * encoding the content according to the protocol
      */
     int rc = http_transaction_read(http);
     switch (rc) {
         case LLB_SUCCESS:
             /*
-             * All is ok, raise an event to the worker poll EPOLL and
-             * link it with the IO event containing the decode payload
-             * ready to be processed
+             * All is ok, process the incoming request/response based on the
+             * state of the transaction, in fact we need to forward the request
+             * to a backend if in WAITING_RESPONSE state or we need to forward
+             * the response back to the requesting client otherwise
+             * (WAITING_RESPONSE state)
              */
             PROCESS_STREAM(http);
             break;
@@ -410,15 +412,24 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
         case -ERRSOCKETERR:
             /*
              * We got an unexpected error or a disconnection from the
-             * client side, remove client from the global map and
-             * free resources allocated such as io_event structure and
-             * paired payload
+             * client side, close the connection and free the resources
              */
             log_error("Closing connection with %s -> %s: %s",
                       http->pipe[CLIENT].ip, http->pipe[BACKEND].ip, llberr(rc));
             http_transaction_deactivate(http);
             break;
         case -ERREAGAIN:
+            // TODO, check for content-length in case of non-chunked mode
+            /*
+             * We read all we could from the last read call, it's not certain
+             * that all data is read, especially in chunked mode, so we proceed
+             * processing the payload only when we're sure we finished reading
+             * which happens in two cases:
+             * - chunked response: the last chunk ends with a 0 length mini-header
+             *   followed by 2 CRLF like "0\r\n\r\n"
+             * - non-chunked response: a content-length header should be present
+             *   stating the expected length of the transmission
+             */
             if (http->encoding == UNSET)
                 http_parse_header(http);
             if (http->encoding != CHUNKED) {
@@ -446,6 +457,11 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
     volatile atomic_int next = ATOMIC_VAR_INIT(0);
     struct backend *backend = NULL;
     if (conf->load_balancing == ROUND_ROBIN) {
+        /*
+         * 1. ROUND ROBIN balancing, just modulo the total number of backends to
+         * obtain the index of the backend, iterate over and over in case of dead
+         * endpoints
+         */
         next = server.current_backend++ % conf->backends_nr;
         backend = &server.backends[next];
         while (backend->alive == false) {
@@ -453,6 +469,12 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
             backend = &server.backends[next];
         }
     } else if (conf->load_balancing == HASH_BALANCING) {
+        /*
+         * 2. HASH BALANCING, uses a hash function to obtain a value from the
+         * entire request and modulo the total number of the backends to select a
+         * backend. Try hashing different parts of the request in case of dead
+         * endpoints selected
+         */
         size_t hash = djb_hash((const char *) http->stream.buf);
         next = hash % conf->backends_nr;
         backend = &server.backends[next];
@@ -463,8 +485,8 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
         }
     }
     /*
-     * Create a client structure to handle his context
-     * connection
+     * Create a connection structure to handle the client context of the
+     * backend new communication channel.
      */
     connection_init(&http->pipe[BACKEND], conf->tls ? server.ssl_ctx : NULL);
     int fd = open_connection(&http->pipe[BACKEND], backend->host, backend->port);
@@ -550,8 +572,9 @@ static void enqueue_event_write(const struct http_transaction *http) {
 }
 
 /*
- * Main entry point for the server, to be called with an address and a port
- * to start listening
+ * Main entry point for the server, to be called with an array of frontend
+ * structs and its length. Every frontend store an address and a port to start
+ * listening on.
  */
 int start_server(const struct frontend *frontends, int frontends_nr) {
 
