@@ -29,6 +29,7 @@
 #define SERVER_H
 
 #include <pthread.h>
+#include <stdatomic.h>
 #include <sys/types.h>
 #include <sys/eventfd.h>
 #include <openssl/ssl.h>
@@ -84,7 +85,7 @@ struct backend {
  * messages to push out and acks respectively.
  */
 struct server {
-    int current_backend;
+    volatile atomic_int current_backend;
     struct memorypool *pool; /* A memory pool for clients allocation */
     struct client *clients; /* Our clients map, it's a handle pointer for
                              * UTHASH APIs, must be set to NULL

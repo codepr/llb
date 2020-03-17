@@ -92,8 +92,8 @@ struct server server;
  * distributed across a threadpool, by paying attention to the shared critical
  * parts on handler module.
  * The access to shared data strucures on the worker thread pool could be
- * guarded by a spinlock, and being generally fast operations it shouldn't
- * suffer high contentions by the threads and thus being really fast.
+ * guarded by a mutex or a spinlock, and being generally fast operations it
+ * shouldn't suffer high contentions by the threads and thus being really fast.
  */
 
 static void http_transaction_init(struct http_transaction *);
@@ -109,10 +109,16 @@ static void write_callback(struct ev_ctx *, void *);
 
 /*
  * Processing request function, will be applied on fully formed request
- * received on read_callback callback
+ * received on read_callback callback, requests are the one incoming from
+ * connected clients toward backends
  */
 static void process_request(struct ev_ctx *, struct http_transaction *);
 
+/*
+ * Processing response function, will be applied on fully formed received
+ * responses on read_callback callback, responses are the one returned by
+ * connected backends back to requesting clients
+ */
 static void process_response(struct ev_ctx *, struct http_transaction *);
 
 /* Periodic routine to perform healthchecks on backends */
@@ -532,7 +538,7 @@ int start_server(const char *addr, const char *port) {
 
     log_info("%lu", sizeof(struct http_transaction));
     /* Initialize global Npt instance */
-    server.current_backend = 0;
+    server.current_backend = ATOMIC_VAR_INIT(0);
     server.pool =
         memorypool_new(MAX_HTTP_TRANSACTIONS, sizeof(struct http_transaction));
     server.clients = NULL;
