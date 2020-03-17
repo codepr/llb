@@ -32,6 +32,7 @@
 #include <sys/eventfd.h>
 #include "log.h"
 #include "config.h"
+#include "server.h"
 #include "network.h"
 #include "npt_internal.h"
 
@@ -57,51 +58,6 @@ static inline void strip_spaces(char **str) {
     while (isspace(**str) && **str) ++(*str);
 }
 
-//static size_t read_memory_with_mul(const char *memory_string) {
-//
-//    /* Extract digit part */
-//    size_t num = parse_int(memory_string);
-//    int mul = 1;
-//
-//    /* Move the pointer forward till the first non-digit char */
-//    while (isdigit(*memory_string)) memory_string++;
-//
-//    /* Set multiplier */
-//    if (STREQ(memory_string, "kb", 2))
-//        mul = 1024;
-//    else if (STREQ(memory_string, "mb", 2))
-//        mul = 1024 * 1024;
-//    else if (STREQ(memory_string, "gb", 2))
-//        mul = 1024 * 1024 * 1024;
-//
-//    return num * mul;
-//}
-
-//static size_t read_time_with_mul(const char *time_string) {
-//
-//    /* Extract digit part */
-//    size_t num = parse_int(time_string);
-//    int mul = 1;
-//
-//    /* Move the pointer forward till the first non-digit char */
-//    while (isdigit(*time_string)) time_string++;
-//
-//    /* Set multiplier */
-//    switch (*time_string) {
-//        case 'm':
-//            mul = 60;
-//            break;
-//        case 'd':
-//            mul = 60 * 60 * 24;
-//            break;
-//        default:
-//            mul = 1;
-//            break;
-//    }
-//
-//    return num * mul;
-//}
-
 /* Parse the integer part of a string, by effectively iterate through it and
    converting the numbers found */
 int parse_int(const char *string) {
@@ -113,6 +69,18 @@ int parse_int(const char *string) {
     }
     return n;
 }
+
+#define PARSE_CONFIG_COMMAS(token, target, type) do {           \
+    type *t = (type *) (target);                                \
+    char *end_token;                                            \
+    size_t toklen = strlen((token));                            \
+    char tmp[toklen + 1];                                       \
+    snprintf(tmp, toklen + 1, "%s", (token));                   \
+    char *host = strtok_r(tmp, ":", &end_token);                \
+    char *port = strtok_r(NULL, ":", &end_token);               \
+    snprintf(t->host, strlen(host) + 1, "%s", host);            \
+    t->port = atoi(port);                                       \
+} while (0);
 
 static int parse_config_tls_protocols(char *token) {
     int protocols = 0;
@@ -141,21 +109,49 @@ static void add_config_value(const char *key, const char *value) {
         }
     } else if (STREQ("log_path", key, klen) == true) {
         strcpy(config.logpath, value);
-    } else if (STREQ("ip_address", key, klen) == true) {
-        strcpy(config.hostname, value);
-    } else if (STREQ("ip_port", key, klen) == true) {
-        strcpy(config.port, value);
-    //} else if (STREQ("max_memory", key, klen) == true) {
-    //    config.max_memory = read_memory_with_mul(value);
-    //} else if (STREQ("max_request_size", key, klen) == true) {
-    //    config.max_request_size = read_memory_with_mul(value);
+    } else if (STREQ("frontends", key, klen) == true) {
+        if (vlen == 0) return;
+        char *end_str;
+        char *token = strtok_r((char *) value, ",", &end_str);
+        if (!token) {
+            PARSE_CONFIG_COMMAS((char *) value,
+                                &config.frontends[config.frontends_nr],
+                                struct frontend);
+        } else {
+            do {
+                if (config.frontends_nr >= config.max_frontends_nr) {
+                    config.max_frontends_nr *= 2;
+                    config.frontends =
+                        npt_realloc(config.frontends,
+                                    config.max_frontends_nr * sizeof(struct frontend));
+                }
+                PARSE_CONFIG_COMMAS(token, &config.frontends[config.frontends_nr++],
+                                    struct frontend);
+            } while ((token = strtok_r(NULL, ",", &end_str)));
+        }
+    } else if (STREQ("backends", key, klen) == true) {
+        if (vlen == 0) return;
+        char *end_str;
+        char *token = strtok_r((char *) value, ",", &end_str);
+        if (!token) {
+            PARSE_CONFIG_COMMAS((char *) value,
+                                &config.backends[config.backends_nr],
+                                struct backend);
+        } else {
+            do {
+                if (config.backends_nr >= config.max_backends_nr) {
+                    config.max_backends_nr *= 2;
+                    config.backends =
+                        npt_realloc(config.backends,
+                                    config.max_backends_nr * sizeof(struct backend));
+                }
+                PARSE_CONFIG_COMMAS(token, &config.backends[config.backends_nr++],
+                                    struct backend);
+            } while ((token = strtok_r(NULL, ",", &end_str)));
+        }
     } else if (STREQ("tcp_backlog", key, klen) == true) {
         int tcp_backlog = parse_int(value);
         config.tcp_backlog = tcp_backlog <= SOMAXCONN ? tcp_backlog : SOMAXCONN;
-    //} else if (STREQ("stats_publish_interval", key, klen) == true) {
-    //    config.stats_pub_interval = read_time_with_mul(value);
-//    } else if (STREQ("keepalive", key, klen) == true) {
-//        config.keepalive = read_time_with_mul(value);
     } else if (STREQ("cafile", key, klen) == true) {
         config.tls = true;
         strcpy(config.cafile, value);
@@ -163,8 +159,6 @@ static void add_config_value(const char *key, const char *value) {
         strcpy(config.certfile, value);
     } else if (STREQ("keyfile", key, klen) == true) {
         strcpy(config.keyfile, value);
-    //} else if (STREQ("password_file", key, klen) == true) {
-    //    strcpy(config.password_file, value);
     } else if (STREQ("tls_protocols", key, klen) == true) {
         if (vlen == 0) return;
         config.tls_protocols = 0;
@@ -173,7 +167,7 @@ static void add_config_value(const char *key, const char *value) {
             config.tls_protocols = parse_config_tls_protocols((char *) value);
         } else {
             while (token) {
-                config.tls_protocols |= parse_config_tls_protocols((char *) token);
+                config.tls_protocols |= parse_config_tls_protocols(token);
                 token = strtok(NULL, ",");
             }
         }
@@ -305,14 +299,16 @@ void config_set_default(void) {
     config.version = VERSION;
     config.loglevel = DEFAULT_LOG_LEVEL;
     memset(config.logpath, 0x00, 0xFFF);
-    strcpy(config.hostname, DEFAULT_HOSTNAME);
-    strcpy(config.port, DEFAULT_PORT);
+    config.frontends_nr = 0;
+    config.max_frontends_nr = 2;
+    config.backends_nr = 0;
+    config.max_backends_nr = 2;
+    config.frontends = npt_calloc(config.max_frontends_nr, sizeof(struct frontend));
+    config.backends = npt_calloc(config.max_backends_nr, sizeof(struct backend));
+    strcpy(config.frontends[0].host, DEFAULT_HOSTNAME);
+    config.frontends[0].port = DEFAULT_PORT;
     config.run = eventfd(0, EFD_NONBLOCK);
-    //config.max_memory = read_memory_with_mul(DEFAULT_MAX_MEMORY);
-    //config.max_request_size = read_memory_with_mul(DEFAULT_MAX_REQUEST_SIZE);
     config.tcp_backlog = SOMAXCONN;
-    //config.stats_pub_interval = read_time_with_mul(DEFAULT_STATS_INTERVAL);
-    //config.keepalive = read_time_with_mul(DEFAULT_KEEPALIVE);
     config.tls = false;
     config.tls_protocols = DEFAULT_TLS_PROTOCOLS;
 }
@@ -348,21 +344,21 @@ void config_print(void) {
     }
     log_info("Npt v%s is starting", VERSION);
     log_info("Network settings:");
-    log_info("\tAddress: %s", config.hostname);
-    log_info("\tPort: %s", config.port);
+    log_info("\tFrontends:");
+    for (int i = 0; i < config.frontends_nr; ++i) {
+        log_info("\tAddress: %s", config.frontends[i].host);
+        log_info("\tPort: %i", config.frontends[i].port);
+    }
     log_info("\tTcp backlog: %d", config.tcp_backlog);
-    //log_info("\tKeepalive: %d", config.keepalive);
     if (config.tls == true) config_print_tls_versions();
-    //log_info("\tFile handles soft limit: %li", get_fh_soft_limit());
-    //const char *human_rsize = memory_to_string(config.max_request_size);
-    //log_info("\tMax request size: %s", human_rsize);
     log_info("Logging:");
     log_info("\tlevel: %s", llevel);
     if (config.logpath[0])
         log_info("\tlogpath: %s", config.logpath);
-    //const char *human_memory = memory_to_string(config.max_memory);
-    //log_info("Max memory: %s", human_memory);
     log_info("Event loop backend: %s", EVENTLOOP_BACKEND);
-    //npt_free((char *) human_memory);
-    //npt_free((char *) human_rsize);
+}
+
+void config_unload(void) {
+    npt_free(config.backends);
+    npt_free(config.frontends);
 }

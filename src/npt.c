@@ -68,8 +68,6 @@ int main (int argc, char **argv) {
     signal(SIGINT, sigint_handler);
     signal(SIGTERM, sigint_handler);
 
-    char *addr = DEFAULT_HOSTNAME;
-    char *port = DEFAULT_PORT;
     char *confpath = DEFAULT_CONF_PATH;
     int debug = 0, daemon = 0;
     int opt;
@@ -77,18 +75,10 @@ int main (int argc, char **argv) {
     // Set default configuration
     config_set_default();
 
-    while ((opt = getopt(argc, argv, "a:c:p:m:vhdn:")) != -1) {
+    while ((opt = getopt(argc, argv, "c:vhd:")) != -1) {
         switch (opt) {
-            case 'a':
-                addr = optarg;
-                strcpy(conf->hostname, addr);
-                break;
             case 'c':
                 confpath = optarg;
-                break;
-            case 'p':
-                port = optarg;
-                strcpy(conf->port, port);
                 break;
             case 'v':
                 debug = 1;
@@ -101,7 +91,7 @@ int main (int argc, char **argv) {
                 exit(EXIT_SUCCESS);
             default:
                 fprintf(stderr,
-                        "Usage: %s [-a addr] [-p port] [-c conf] [-v]\n",
+                        "Usage: %s [-c conf] [-vhd]\n",
                         argv[0]);
                 exit(EXIT_FAILURE);
         }
@@ -121,9 +111,10 @@ int main (int argc, char **argv) {
     // Print configuration
     config_print();
 
-    start_server(conf->hostname, conf->port);
+    start_server(conf->frontends, conf->frontends_nr);
 
     npt_log_close();
+    npt_config_unload();
 
     return 0;
 }

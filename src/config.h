@@ -66,11 +66,7 @@
 #define DEFAULT_LOG_LEVEL           DEBUG
 #define DEFAULT_CONF_PATH           "/etc/npt/npt.conf"
 #define DEFAULT_HOSTNAME            "127.0.0.1"
-#define DEFAULT_PORT                "8789"
-#define DEFAULT_MAX_MEMORY          "2GB"
-#define DEFAULT_MAX_REQUEST_SIZE    "512KB"
-#define DEFAULT_STATS_INTERVAL      "10s"
-#define DEFAULT_KEEPALIVE           "60s"
+#define DEFAULT_PORT                8789
 #ifdef TLS1_3_VERSION
 #define DEFAULT_TLS_PROTOCOLS       (NPT_TLSv1_2 | NPT_TLSv1_3)
 #else
@@ -88,11 +84,14 @@ struct config {
     int loglevel;
     /* Log file path */
     char logpath[0xFFF];
-    /* Hostname to listen on */
-    char hostname[0xFF];
-    /* Port to open while listening, only if socket_family is INET,
-     * otherwise it's ignored */
-    char port[0xFF];
+    /* List of frontends to listen on */
+    struct frontend *frontends;
+    int frontends_nr;
+    int max_frontends_nr;
+    /* List of backend to load-balance */
+    struct backend *backends;
+    int backends_nr;
+    int max_backends_nr;
     /* TCP backlog size */
     int tcp_backlog;
     /* TLS flag */

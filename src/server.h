@@ -71,6 +71,21 @@
 #define ERREAGAIN           2
 #define ERRSOCKETERR        3
 
+/*
+ * Frontend endpoint, defines a pair host:port the server will listen on, to
+ * which clients can connect to. There can be multiple different frontends.
+ */
+struct frontend {
+    char host[0xFF];
+    int port;
+};
+
+/*
+ * Backend endpoint, defines a pair host:port to which the traffic will be
+ * load-balanced by the server, connecting clients through frontends will be
+ * redirected to connected backends, according to the selected balancing
+ * method.
+ */
 struct backend {
     char host[0xFF];
     int port;
@@ -96,7 +111,7 @@ struct server {
 
 extern struct server server;
 
-int start_server(const char *, const char *);
+int start_server(const struct frontend *, int);
 void enqueue_event_write(const struct http_transaction *);
 void daemonize(void);
 

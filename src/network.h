@@ -128,7 +128,7 @@ void close_connection(struct connection *);
  * Create a non-blocking socket and make it listen on the specfied address and
  * port
  */
-int make_listen(const char *, const char *);
+int make_listen(const char *, int);
 
 int make_connection(const char *, int);
 

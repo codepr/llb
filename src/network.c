@@ -139,11 +139,14 @@ err:
  * Create a non-blocking socket and make it listen on the specfied address and
  * port
  */
-int make_listen(const char *host, const char *port) {
+int make_listen(const char *host, int port) {
 
     int sfd;
 
-    if ((sfd = create_and_bind(host, port)) == -1)
+    char port_str[6];
+    snprintf(port_str, 6, "%i", port);
+
+    if ((sfd = create_and_bind(host, port_str)) == -1)
         abort();
 
     if ((set_nonblocking(sfd)) == -1)

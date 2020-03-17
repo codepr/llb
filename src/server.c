@@ -46,7 +46,8 @@ pthread_mutex_t mutex;
  * instance or not (to not repeat useless cron jobs on multiple threads)
  */
 struct listen_payload {
-    int fd;
+    int *fds;
+    int frontends_nr;
     bool cronjobs;
 };
 
@@ -256,8 +257,9 @@ static inline int http_transaction_read(struct http_transaction *http) {
     else if (http->status == WAITING_RESPONSE)
         nread = recv_data(&http->pipe[BACKEND], &http->stream);
 
-    if (errno != EAGAIN && errno != EWOULDBLOCK && nread <= 0)
-        return nread == -1 ? -ERRSOCKETERR : -ERRCLIENTDC;
+    if (errno != EAGAIN && errno != EWOULDBLOCK && nread < 0)
+        return -ERRSOCKETERR;
+        //return nread == -1 ? -ERRSOCKETERR : -ERRCLIENTDC;
 
     if (errno == EAGAIN || errno == EWOULDBLOCK)
         return -ERREAGAIN;
@@ -409,7 +411,7 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
              * paired payload
              */
             log_error("Closing connection with %s -> %s: %s",
-                      http->pipe[CLIENT], http->pipe[BACKEND], npterr(rc));
+                      http->pipe[CLIENT].ip, http->pipe[BACKEND].ip, npterr(rc));
             http_transaction_deactivate(http);
             break;
         case -ERREAGAIN:
@@ -443,16 +445,12 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
  * reset the client state to allow reading some more packets.
  */
 static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
-    if (server.current_backend == 8)
-        server.current_backend = 0;
-    struct backend *backend = &server.backends[server.current_backend++];
+    volatile atomic_int next = server.current_backend++ % 8;
+    struct backend *backend = &server.backends[next];
     while (backend->alive == false) {
-        backend = &server.backends[server.current_backend++];
-        if (server.current_backend == 8)
-            server.current_backend = 0;
+        next = server.current_backend++ % 8;
+        backend = &server.backends[next];
     }
-    log_debug("Connecting to %s:%d (%i)",
-              backend->host, backend->port, server.current_backend);
     /*
      * Create a client structure to handle his context
      * connection
@@ -466,9 +464,6 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
         return;
     }
 
-    //log_debug("Processing request (%i) %s", http->stream.size, http->stream.buf);
-    char *ptr = strstr((const char *) http->stream.buf, "8789");
-    memcpy(ptr, "6090", 4);
     http->status = FORWARDING_REQUEST;
 
     /* Add it to the epoll loop */
@@ -476,7 +471,6 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
 }
 
 static void process_response(struct ev_ctx *ctx, struct http_transaction *http) {
-    log_debug("Forwarding response (%i) %s", http->stream.size, http->stream.buf);
     http->status = FORWARDING_RESPONSE;
     enqueue_event_write(http);
 }
@@ -500,12 +494,13 @@ static void stop_handler(struct ev_ctx *ctx, void *arg) {
 static void eventloop_start(void *args) {
     struct listen_payload *loop_data = args;
     struct ev_ctx ctx;
-    int sfd = loop_data->fd;
+    int *fds = loop_data->fds;
     ev_init(&ctx, EVENTLOOP_MAX_EVENTS);
     // Register stop event
     ev_register_event(&ctx, conf->run, EV_CLOSEFD|EV_READ, stop_handler, NULL);
-    // Register listening FD with accept callback
-    ev_register_event(&ctx, sfd, EV_READ, accept_callback, &sfd);
+    // Register frontends listening FDs with accept callback
+    for (int i = 0; i < loop_data->frontends_nr; ++i)
+        ev_register_event(&ctx, fds[i], EV_READ, accept_callback, &fds[i]);
     // Register periodic tasks
     if (loop_data->cronjobs == true)
         ev_register_cron(&ctx, backends_healthcheck, NULL, 1, 0);
@@ -534,7 +529,7 @@ void enqueue_event_write(const struct http_transaction *http) {
  * Main entry point for the server, to be called with an address and a port
  * to start listening
  */
-int start_server(const char *addr, const char *port) {
+int start_server(const struct frontend *frontends, int frontends_nr) {
 
     /* Initialize global Npt instance */
     server.current_backend = ATOMIC_VAR_INIT(0);
@@ -548,9 +543,6 @@ int start_server(const char *addr, const char *port) {
         server.backends[i].alive = true;
     }
 
-    /* Start listening for new connections */
-    int sfd = make_listen(addr, port);
-
     /* Setup SSL in case of flag true */
     if (conf->tls == true) {
         openssl_init();
@@ -561,7 +553,15 @@ int start_server(const char *addr, const char *port) {
 
     log_info("Server start");
 
-    struct listen_payload loop_start = { sfd, false };
+    struct listen_payload loop_start = {
+        .fds = npt_calloc(frontends_nr, sizeof(struct frontend)),
+        .frontends_nr = frontends_nr,
+        .cronjobs = false
+    };
+
+    /* Start frontend endpoints listening for new connections */
+    for (int i = 0; i < frontends_nr; ++i)
+        loop_start.fds[i] = make_listen(frontends[i].host, frontends[i].port);
 
 #if THREADSNR > 0
     pthread_t thrs[THREADSNR];
@@ -579,13 +579,15 @@ int start_server(const char *addr, const char *port) {
         pthread_join(thrs[i], NULL);
 #endif
 
-    close(sfd);
+    for (int i = 0; i < frontends_nr; ++i)
+        close(loop_start.fds[i]);
 
     /* Destroy SSL context, if any present */
     if (conf->tls == true) {
         SSL_CTX_free(server.ssl_ctx);
         openssl_cleanup();
     }
+    npt_free(loop_start.fds);
     npt_free(server.backends);
 
     log_info("Npt v%s exiting", VERSION);
