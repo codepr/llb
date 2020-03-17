@@ -91,6 +91,11 @@ static inline int set_tcpnodelay(int fd) {
     return setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &(int) {1}, sizeof(int));
 }
 
+/*
+ * Create a SOCK_STREAM socket and bind it to a valid address, setting
+ * SO_REUSEADDR in order to avoid annoying waiting for port to be available
+ * after the process exited
+ */
 static int create_and_bind(const char *host, const char *port) {
 
     struct addrinfo hints = {
@@ -149,6 +154,7 @@ int make_listen(const char *host, int port) {
     if ((sfd = create_and_bind(host, port_str)) == -1)
         abort();
 
+    // Make the socket non blocking
     if ((set_nonblocking(sfd)) == -1)
         abort();
 
@@ -166,7 +172,8 @@ int make_listen(const char *host, int port) {
 }
 
 /*
- * Create a socket and use it to connect to the specified host and port
+ * Create a non-blocking socket and use it to connect to the specified host and
+ * port
  */
 int make_connection(const char *host, int port) {
 
@@ -211,7 +218,9 @@ err:
 
 /*
  * Accept a connection and set it NON_BLOCKING and CLOEXEC, optionally also set
- * TCP_NODELAY disabling Nagle's algorithm
+ * TCP_NODELAY disabling Nagle's algorithm.
+ * Accept an optional argument `ip` to store the address of the connecting
+ * client.
  */
 static int accept_conn(int sfd, char *ip) {
 
@@ -224,6 +233,7 @@ static int accept_conn(int sfd, char *ip) {
         return LLB_FAILURE;
     }
 
+    // Make the new connected socket non-blocking
     if ((set_nonblocking(clientsock)) == -1)
         abort();
 
@@ -244,7 +254,16 @@ static int accept_conn(int sfd, char *ip) {
     return clientsock;
 }
 
+/*
+ * Send all bytes contained in a stream buffer, as indicated by the size member
+ * of the stream structure.
+ * The socket descriptor must be non-blocking and thus it can return immediatly
+ * if no data can be passed in to the kernel-space buffer to be delivered out,
+ * in that case errno will be set to EAGAIN and should be treated as an
+ * expected valid state.
+ */
 ssize_t stream_send(int fd, struct stream *stream) {
+
     size_t total = stream->size;
     ssize_t n = 0;
 
@@ -268,8 +287,12 @@ err:
 }
 
 /*
- * Receive a given number of bytes on the descriptor fd, storing the stream of
- * data into a 2 Mb capped buffer
+ * Receive all possible bytes on the descriptor fd, storing the stream of data
+ * into a stream structure, updating it's size value.
+ * The socket descriptor must be non-blocking and thus it can return immediatly
+ * if no data can be read from the kernel-space buffer to be, in that case
+ * errno will be set to EAGAIN and should be treated as an expected valid
+ * state.
  */
 ssize_t stream_recv(int fd, struct stream *stream) {
 
@@ -302,6 +325,12 @@ err:
     fprintf(stderr, "read(2) - error reading data: %s\n", strerror(errno));
     return LLB_FAILURE;
 }
+
+/*
+ * ======================================================
+ *  TLS functions for setup and stream write/recv ops
+ * ======================================================
+ */
 
 void openssl_init() {
     SSL_library_init();
@@ -401,6 +430,11 @@ SSL *ssl_accept(SSL_CTX *ctx, int fd) {
     return ssl;
 }
 
+/*
+ * Sends a stream of bytes as indicated by the size member of the stream
+ * structure passed in as argument, just like the `stream_send` function but
+ * using an inited SSL pointer to encrypt the data before sending it out
+ */
 ssize_t ssl_stream_send(SSL *ssl, struct stream *stream) {
     size_t total = stream->size;
     ssize_t n = 0;
@@ -431,6 +465,11 @@ err:
     return LLB_FAILURE;
 }
 
+/*
+ * Receive a stream of bytes updating the size member of the stream structure
+ * passed in as argument, just like the `stream_recv` function but using an
+ * inited SSL pointer to decrypt the data after the reception
+ */
 ssize_t ssl_stream_recv(SSL *ssl, struct stream *stream) {
 
     ssize_t n = 0;
