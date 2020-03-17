@@ -34,7 +34,7 @@
 #include "config.h"
 #include "server.h"
 #include "network.h"
-#include "npt_internal.h"
+#include "llb_internal.h"
 
 /* The main configuration structure */
 static struct config config;
@@ -85,13 +85,13 @@ int parse_int(const char *string) {
 static int parse_config_tls_protocols(char *token) {
     int protocols = 0;
     if (STREQ(token, "tlsv1_1", 7) == true)
-        protocols |= NPT_TLSv1_1;
+        protocols |= LLB_TLSv1_1;
     else if (STREQ(token, "tlsv1_2", 7) == true)
-        protocols |= NPT_TLSv1_2;
+        protocols |= LLB_TLSv1_2;
     else if (STREQ(token, "tlsv1_3", 7) == true)
-        protocols |= NPT_TLSv1_3;
+        protocols |= LLB_TLSv1_3;
     else if (STREQ(token, "tlsv1", 5) == true)
-        protocols |= NPT_TLSv1;
+        protocols |= LLB_TLSv1;
     return protocols;
 }
 
@@ -122,7 +122,7 @@ static void add_config_value(const char *key, const char *value) {
                 if (config.frontends_nr >= config.max_frontends_nr) {
                     config.max_frontends_nr *= 2;
                     config.frontends =
-                        npt_realloc(config.frontends,
+                        llb_realloc(config.frontends,
                                     config.max_frontends_nr * sizeof(struct frontend));
                 }
                 PARSE_CONFIG_COMMAS(token, &config.frontends[config.frontends_nr++],
@@ -142,7 +142,7 @@ static void add_config_value(const char *key, const char *value) {
                 if (config.backends_nr >= config.max_backends_nr) {
                     config.max_backends_nr *= 2;
                     config.backends =
-                        npt_realloc(config.backends,
+                        llb_realloc(config.backends,
                                     config.max_backends_nr * sizeof(struct backend));
                 }
                 PARSE_CONFIG_COMMAS(token, &config.backends[config.backends_nr++],
@@ -207,25 +207,25 @@ char *memory_to_string(size_t memory) {
         translated_memory = memory;
         numlen = number_len(translated_memory);
         // +1 for 'b' +1 for nul terminating
-        mstring = npt_malloc(numlen + 1);
+        mstring = llb_malloc(numlen + 1);
         snprintf(mstring, numlen + 1, "%db", translated_memory);
     } else if (memory < 1048576) {
         translated_memory = memory / 1024;
         numlen = number_len(translated_memory);
         // +2 for 'Kb' +1 for nul terminating
-        mstring = npt_malloc(numlen + 2);
+        mstring = llb_malloc(numlen + 2);
         snprintf(mstring, numlen + 2, "%dKb", translated_memory);
     } else if (memory < 1073741824) {
         translated_memory = memory / (1024 * 1024);
         numlen = number_len(translated_memory);
         // +2 for 'Mb' +1 for nul terminating
-        mstring = npt_malloc(numlen + 2);
+        mstring = llb_malloc(numlen + 2);
         snprintf(mstring, numlen + 2, "%dMb", translated_memory);
     } else {
         translated_memory = memory / (1024 * 1024 * 1024);
         numlen = number_len(translated_memory);
         // +2 for 'Gb' +1 for nul terminating
-        mstring = npt_malloc(numlen + 2);
+        mstring = llb_malloc(numlen + 2);
         snprintf(mstring, numlen + 2, "%dGb", translated_memory);
     }
 
@@ -240,7 +240,7 @@ int config_load(const char *configpath) {
 
     if (!fh) {
         log_warning("WARNING: Unable to open conf file %s", configpath);
-        log_warning("To specify a config file run npt -c /path/to/conf");
+        log_warning("To specify a config file run llb -c /path/to/conf");
         return false;
     }
 
@@ -303,8 +303,8 @@ void config_set_default(void) {
     config.max_frontends_nr = 2;
     config.backends_nr = 0;
     config.max_backends_nr = 2;
-    config.frontends = npt_calloc(config.max_frontends_nr, sizeof(struct frontend));
-    config.backends = npt_calloc(config.max_backends_nr, sizeof(struct backend));
+    config.frontends = llb_calloc(config.max_frontends_nr, sizeof(struct frontend));
+    config.backends = llb_calloc(config.max_backends_nr, sizeof(struct backend));
     strcpy(config.frontends[0].host, DEFAULT_HOSTNAME);
     config.frontends[0].port = DEFAULT_PORT;
     config.run = eventfd(0, EFD_NONBLOCK);
@@ -316,19 +316,19 @@ void config_set_default(void) {
 void config_print_tls_versions(void) {
     char protocols[64] = {0};
     int pos = 0;
-    if (config.tls_protocols & NPT_TLSv1) {
+    if (config.tls_protocols & LLB_TLSv1) {
         strncpy(protocols, "TLSv1, ", 64);
         pos += 7;
     }
-    if (config.tls_protocols & NPT_TLSv1_1) {
+    if (config.tls_protocols & LLB_TLSv1_1) {
         strncpy(protocols + pos, "TLSv1_1, ", 64 - pos);
         pos += 9;
     }
-    if (config.tls_protocols & NPT_TLSv1_2) {
+    if (config.tls_protocols & LLB_TLSv1_2) {
         strncpy(protocols + pos, "TLSv1_2, ", 64 - pos);
         pos += 9;
     }
-    if (config.tls_protocols & NPT_TLSv1_3) {
+    if (config.tls_protocols & LLB_TLSv1_3) {
         strncpy(protocols + pos, "TLSv1_3, ", 64 - pos);
         pos += 9;
     }
@@ -342,7 +342,7 @@ void config_print(void) {
         if (lmap[i].loglevel == config.loglevel)
             llevel = lmap[i].lname;
     }
-    log_info("Npt v%s is starting", VERSION);
+    log_info("llb v%s is starting", VERSION);
     log_info("Network settings:");
     log_info("\tTcp backlog: %d", config.tcp_backlog);
     log_info("  Frontends:");
@@ -362,6 +362,6 @@ void config_print(void) {
 }
 
 void config_unload(void) {
-    npt_free(config.backends);
-    npt_free(config.frontends);
+    llb_free(config.backends);
+    llb_free(config.frontends);
 }

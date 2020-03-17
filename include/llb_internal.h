@@ -25,8 +25,8 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef NPT_INTERNAL
-#define NPT_INTERNAL
+#ifndef LLB_INTERNAL
+#define LLB_INTERNAL
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,10 +34,10 @@
 #include <assert.h>
 #include <pthread.h>
 
-#define NPT_SUCCESS  0
-#define NPT_FAILURE -1
+#define LLB_SUCCESS  0
+#define LLB_FAILURE -1
 
-static inline void *npt_malloc(size_t size) {
+static inline void *llb_malloc(size_t size) {
     void *ptr = malloc(size);
     if (!ptr) {
         fprintf(stderr, "[%s:%ul] Out of memory (%lu bytes)\n",
@@ -47,7 +47,7 @@ static inline void *npt_malloc(size_t size) {
     return ptr;
 }
 
-static inline void *npt_calloc(size_t n, size_t size) {
+static inline void *llb_calloc(size_t n, size_t size) {
     void *ptr = calloc(n, size);
     if (!ptr) {
         fprintf(stderr, "[%s:%ul] Out of memory (%lu bytes)\n",
@@ -57,7 +57,7 @@ static inline void *npt_calloc(size_t n, size_t size) {
     return ptr;
 }
 
-static inline void *npt_realloc(void *ptr, size_t size) {
+static inline void *llb_realloc(void *ptr, size_t size) {
     assert(ptr && size > 0);
     void *new_ptr = realloc(ptr, size);
     if (!new_ptr) {
@@ -68,7 +68,7 @@ static inline void *npt_realloc(void *ptr, size_t size) {
     return new_ptr;
 }
 
-static inline void npt_free(void *ptr) {
+static inline void llb_free(void *ptr) {
     free(ptr);
 }
 

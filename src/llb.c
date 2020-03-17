@@ -34,7 +34,7 @@
 #include "log.h"
 #include "config.h"
 #include "server.h"
-#include "npt_internal.h"
+#include "llb_internal.h"
 
 // Stops epoll_wait loops by sending an event
 static void sigint_handler(int signum) {
@@ -55,7 +55,7 @@ static const char *flag_description[] = {
 };
 
 void print_help(char *me) {
-    printf("\nNpt v%s MQTT broker 3.1.1\n\n", VERSION);
+    printf("\nllb v%s MQTT broker 3.1.1\n\n", VERSION);
     printf("Usage: %s [-a addr] [-p port] [-c conf] [-v|-d|-h]\n\n", me);
     const char flags[6] = "hcapvd";
     for (int i = 0; i < 6; ++i)
@@ -103,7 +103,7 @@ int main (int argc, char **argv) {
     // Try to load a configuration, if found
     config_load(confpath);
 
-    npt_log_init(conf->logpath);
+    llb_log_init(conf->logpath);
 
     if (daemon == 1)
         daemonize();
@@ -113,7 +113,7 @@ int main (int argc, char **argv) {
 
     start_server(conf->frontends, conf->frontends_nr);
 
-    npt_log_close();
+    llb_log_close();
     config_unload();
 
     return 0;

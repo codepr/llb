@@ -36,7 +36,7 @@
 /* Global file handle for logging on disk */
 static FILE *fh = NULL;
 
-void npt_log_init(const char *file) {
+void llb_log_init(const char *file) {
     if (!file) return;
     fh = fopen(file, "a+");
     if (!fh)
@@ -44,14 +44,14 @@ void npt_log_init(const char *file) {
                (unsigned long) time(NULL), file);
 }
 
-void npt_log_close(void) {
+void llb_log_close(void) {
     if (fh) {
         fflush(fh);
         fclose(fh);
     }
 }
 
-void npt_log(int level, const char *fmt, ...) {
+void llb_log(int level, const char *fmt, ...) {
 
     if (level < conf->loglevel)
         return;

@@ -35,7 +35,7 @@
 #include "server.h"
 #include "network.h"
 #include "memorypool.h"
-#include "npt_internal.h"
+#include "llb_internal.h"
 
 pthread_mutex_t mutex;
 
@@ -151,7 +151,7 @@ static inline void http_parse_header(struct http_transaction *http) {
 }
 
 /* Simple error_code to string function, to be refined */
-static const char *npterr(int rc) {
+static const char *llberr(int rc) {
     switch (rc) {
         case -ERRCLIENTDC:
             return "Client disconnected";
@@ -202,7 +202,7 @@ static void http_transaction_init(struct http_transaction *http) {
     http->stream.capacity = MAX_HTTP_TRANSACTION_SIZE;
     if (!http->stream.buf)
         http->stream.buf =
-            npt_calloc(MAX_HTTP_TRANSACTION_SIZE, sizeof(unsigned char));
+            llb_calloc(MAX_HTTP_TRANSACTION_SIZE, sizeof(unsigned char));
 }
 
 /*
@@ -264,7 +264,7 @@ static inline int http_transaction_read(struct http_transaction *http) {
     if (errno == EAGAIN || errno == EWOULDBLOCK)
         return -ERREAGAIN;
 
-    return NPT_SUCCESS;
+    return LLB_SUCCESS;
 }
 
 /*
@@ -288,7 +288,7 @@ static inline int http_transaction_write(struct http_transaction *http) {
     //if (errno == EAGAIN || errno == EWOULDBLOCK)
     //    return -ERREAGAIN;
 
-    return NPT_SUCCESS;
+    return LLB_SUCCESS;
 
 clientdc:
 
@@ -310,7 +310,7 @@ static void write_callback(struct ev_ctx *ctx, void *arg) {
     struct http_transaction *http = arg;
     int err = http_transaction_write(http);
     switch (err) {
-        case NPT_SUCCESS: // OK
+        case LLB_SUCCESS: // OK
             /*
              * Rearm descriptor making it ready to receive input,
              * read_callback will be the callback to be used; also reset the
@@ -394,7 +394,7 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
      */
     int rc = http_transaction_read(http);
     switch (rc) {
-        case NPT_SUCCESS:
+        case LLB_SUCCESS:
             /*
              * All is ok, raise an event to the worker poll EPOLL and
              * link it with the IO event containing the decode payload
@@ -411,7 +411,7 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
              * paired payload
              */
             log_error("Closing connection with %s -> %s: %s",
-                      http->pipe[CLIENT].ip, http->pipe[BACKEND].ip, npterr(rc));
+                      http->pipe[CLIENT].ip, http->pipe[BACKEND].ip, llberr(rc));
             http_transaction_deactivate(http);
             break;
         case -ERREAGAIN:
@@ -531,7 +531,7 @@ void enqueue_event_write(const struct http_transaction *http) {
  */
 int start_server(const struct frontend *frontends, int frontends_nr) {
 
-    /* Initialize global Npt instance */
+    /* Initialize global llb instance */
     server.current_backend = ATOMIC_VAR_INIT(0);
     server.pool =
         memorypool_new(MAX_HTTP_TRANSACTIONS, sizeof(struct http_transaction));
@@ -549,7 +549,7 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
     log_info("Server start");
 
     struct listen_payload loop_start = {
-        .fds = npt_calloc(frontends_nr, sizeof(struct frontend)),
+        .fds = llb_calloc(frontends_nr, sizeof(struct frontend)),
         .frontends_nr = frontends_nr,
         .cronjobs = false
     };
@@ -582,11 +582,11 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
         SSL_CTX_free(server.ssl_ctx);
         openssl_cleanup();
     }
-    npt_free(loop_start.fds);
+    llb_free(loop_start.fds);
 
-    log_info("Npt v%s exiting", VERSION);
+    log_info("llb v%s exiting", VERSION);
 
-    return NPT_SUCCESS;
+    return LLB_SUCCESS;
 }
 
 /*

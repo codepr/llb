@@ -27,21 +27,21 @@
 
 #include <string.h>
 #include "memorypool.h"
-#include "npt_internal.h"
+#include "llb_internal.h"
 
 static void memorypool_resize(struct memorypool *);
 
 struct memorypool *memorypool_new(size_t blocks_nr, size_t blocksize) {
-    struct memorypool *pool = npt_malloc(sizeof(*pool));
+    struct memorypool *pool = llb_malloc(sizeof(*pool));
     if (!pool)
         return NULL;
     blocksize = blocksize >= sizeof(intptr_t) ? blocksize : sizeof(intptr_t);
-    pool->memory = npt_calloc(blocks_nr, blocksize);
+    pool->memory = llb_calloc(blocks_nr, blocksize);
     pool->free = pool->memory;
     pool->blocks_nr = blocks_nr;
     pool->blocksize = blocksize;
     if (!pool->free) {
-        npt_free(pool);
+        llb_free(pool);
         return NULL;
     }
     /*
@@ -80,8 +80,8 @@ struct memorypool *memorypool_new(size_t blocks_nr, size_t blocksize) {
 }
 
 void memorypool_destroy(struct memorypool *pool) {
-    npt_free(pool->memory);
-    npt_free(pool);
+    llb_free(pool->memory);
+    llb_free(pool);
 }
 
 void *memorypool_alloc(struct memorypool *pool) {
@@ -117,7 +117,7 @@ static void memorypool_resize(struct memorypool *pool) {
     size_t newsize = pool->blocks_nr * pool->blocksize;
     /* We extract next memory block offset position */
     intptr_t offset = *((intptr_t *) pool->free);
-    pool->memory = npt_realloc(pool->memory, newsize);
+    pool->memory = llb_realloc(pool->memory, newsize);
     pool->free = (void *)((char *) pool->memory + ((offset-1) * pool->blocksize));
     /*
      * Apply the same logic of the init, but starting from the updated offset,

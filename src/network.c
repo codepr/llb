@@ -42,7 +42,7 @@
 #include <openssl/err.h>
 #include "config.h"
 #include "network.h"
-#include "npt_internal.h"
+#include "llb_internal.h"
 
 /* Set non-blocking socket */
 static inline int set_nonblocking(int fd) {
@@ -56,12 +56,12 @@ static inline int set_nonblocking(int fd) {
     if (result == -1)
         goto err;
 
-    return NPT_SUCCESS;
+    return LLB_SUCCESS;
 
 err:
 
     perror("set_nonblocking");
-    return NPT_FAILURE;
+    return LLB_FAILURE;
 }
 
 static inline int set_cloexec(int fd) {
@@ -75,12 +75,12 @@ static inline int set_cloexec(int fd) {
     if (result == -1)
         goto err;
 
-    return NPT_SUCCESS;
+    return LLB_SUCCESS;
 
 err:
 
     perror("set_cloexec");
-    return NPT_FAILURE;
+    return LLB_FAILURE;
 }
 
 /*
@@ -132,7 +132,7 @@ static int create_and_bind(const char *host, const char *port) {
 err:
 
     perror("Unable to bind socket");
-    return NPT_FAILURE;
+    return LLB_FAILURE;
 }
 
 /*
@@ -206,7 +206,7 @@ err:
         return sfd;
 
     perror("socket(2) opening socket failed");
-    return NPT_FAILURE;
+    return LLB_FAILURE;
 }
 
 /*
@@ -221,7 +221,7 @@ static int accept_conn(int sfd, char *ip) {
 
     if ((clientsock = accept(sfd, (struct sockaddr *) &addr, &addrlen)) < 0) {
         if (errno != EWOULDBLOCK && errno != EAGAIN) perror("accept");
-        return NPT_FAILURE;
+        return LLB_FAILURE;
     }
 
     if ((set_nonblocking(clientsock)) == -1)
@@ -235,7 +235,7 @@ static int accept_conn(int sfd, char *ip) {
     char ip_buff[INET_ADDRSTRLEN];
     if (inet_ntop(AF_INET, &addr.sin_addr, ip_buff, sizeof(ip_buff)) == NULL) {
         if (close(clientsock) < 0) perror("close");
-        return NPT_FAILURE;
+        return LLB_FAILURE;
     }
 
     if (ip)
@@ -264,7 +264,7 @@ ssize_t stream_send(int fd, struct stream *stream) {
 err:
 
     fprintf(stderr, "send(2) - error sending data: %s\n", strerror(errno));
-    return NPT_FAILURE;
+    return LLB_FAILURE;
 }
 
 /*
@@ -285,13 +285,13 @@ ssize_t stream_recv(int fd, struct stream *stream) {
         }
 
         //if (n == 0)
-        //    return NPT_SUCCESS;
+        //    return LLB_SUCCESS;
 
         stream->size += n;
 
         if (stream->size == stream->capacity) {
             stream->capacity *= 2;
-            stream->buf = npt_realloc(stream->buf, stream->capacity);
+            stream->buf = llb_realloc(stream->buf, stream->capacity);
         }
     } while (n > 0);
 
@@ -300,7 +300,7 @@ ssize_t stream_recv(int fd, struct stream *stream) {
 err:
 
     fprintf(stderr, "read(2) - error reading data: %s\n", strerror(errno));
-    return NPT_FAILURE;
+    return LLB_FAILURE;
 }
 
 void openssl_init() {
@@ -328,16 +328,16 @@ SSL_CTX *create_ssl_context() {
     SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2|SSL_OP_NO_SSLv3);
     SSL_CTX_set_options(ctx, SSL_OP_SINGLE_DH_USE);
 
-    if (!(conf->tls_protocols & NPT_TLSv1))
+    if (!(conf->tls_protocols & LLB_TLSv1))
         SSL_CTX_set_options(ctx, SSL_OP_NO_TLSv1);
-    if (!(conf->tls_protocols & NPT_TLSv1_1))
+    if (!(conf->tls_protocols & LLB_TLSv1_1))
         SSL_CTX_set_options(ctx, SSL_OP_NO_TLSv1_1);
 #ifdef SSL_OP_NO_TLSv1_2
-    if (!(conf->tls_protocols & NPT_TLSv1_2))
+    if (!(conf->tls_protocols & LLB_TLSv1_2))
         SSL_CTX_set_options(ctx, SSL_OP_NO_TLSv1_2);
 #endif
 #ifdef SSL_OP_NO_TLSv1_3
-    if (!(conf->tls_protocols & NPT_TLSv1_3))
+    if (!(conf->tls_protocols & LLB_TLSv1_3))
         SSL_CTX_set_options(ctx, SSL_OP_NO_TLSv1_3);
 #endif
 
@@ -414,7 +414,7 @@ ssize_t ssl_stream_send(SSL *ssl, struct stream *stream) {
                 continue;
             if (err == SSL_ERROR_ZERO_RETURN
                 || (err == SSL_ERROR_SYSCALL && !errno))
-                return NPT_SUCCESS;  // Connection closed
+                return LLB_SUCCESS;  // Connection closed
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 break;
             else
@@ -428,7 +428,7 @@ ssize_t ssl_stream_send(SSL *ssl, struct stream *stream) {
 err:
 
     fprintf(stderr, "SSL_write(2) - error sending data: %s\n", strerror(errno));
-    return NPT_FAILURE;
+    return LLB_FAILURE;
 }
 
 ssize_t ssl_stream_recv(SSL *ssl, struct stream *stream) {
@@ -445,7 +445,7 @@ ssize_t ssl_stream_recv(SSL *ssl, struct stream *stream) {
                 continue;
             if (err == SSL_ERROR_ZERO_RETURN
                 || (err == SSL_ERROR_SYSCALL && !errno))
-                return NPT_SUCCESS;  // Connection closed
+                return LLB_SUCCESS;  // Connection closed
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 break;
             else
@@ -453,13 +453,13 @@ ssize_t ssl_stream_recv(SSL *ssl, struct stream *stream) {
         }
 
         if (n == 0)
-            return NPT_SUCCESS;
+            return LLB_SUCCESS;
 
         stream->size += n;
 
         if (stream->size == stream->capacity) {
             stream->capacity *= 2;
-            stream->buf = npt_realloc(stream->buf, stream->capacity);
+            stream->buf = llb_realloc(stream->buf, stream->capacity);
         }
     } while (n > 0);
 
@@ -468,7 +468,7 @@ ssize_t ssl_stream_recv(SSL *ssl, struct stream *stream) {
 err:
 
     fprintf(stderr, "SSL_read(2) - error reading data: %s\n", strerror(errno));
-    return NPT_FAILURE;
+    return LLB_FAILURE;
 }
 
 /*
@@ -514,7 +514,7 @@ static int conn_tls_connect(struct connection *c, const char *host, int port) {
     (void) c;
     (void) host;
     (void) port;
-    return NPT_SUCCESS;
+    return LLB_SUCCESS;
 }
 
 static ssize_t conn_tls_send(struct connection *c, struct stream *stream) {
@@ -561,7 +561,7 @@ void connection_init(struct connection *conn, const SSL_CTX *ssl_ctx) {
  * type of the underlying communication.
  */
 struct connection *connection_new(const SSL_CTX *ssl_ctx) {
-    struct connection *conn = npt_malloc(sizeof(*conn));
+    struct connection *conn = llb_malloc(sizeof(*conn));
     if (!conn)
         return NULL;
     connection_init(conn, ssl_ctx);

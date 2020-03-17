@@ -34,7 +34,7 @@
 #include <sys/timerfd.h>
 #include "ev.h"
 #include "config.h"
-#include "npt_internal.h"
+#include "llb_internal.h"
 
 #if defined(EPOLL)
 
@@ -90,17 +90,17 @@ static int epoll_del(int efd, int fd) {
 }
 
 static void ev_api_init(struct ev_ctx *ctx, int events_nr) {
-    struct epoll_api *e_api = npt_malloc(sizeof(*e_api));
+    struct epoll_api *e_api = llb_malloc(sizeof(*e_api));
     e_api->fd = epoll_create1(0);
-    e_api->events = npt_calloc(events_nr, sizeof(struct epoll_event));
+    e_api->events = llb_calloc(events_nr, sizeof(struct epoll_event));
     ctx->api = e_api;
     ctx->maxfd = events_nr;
 }
 
 static void ev_api_destroy(struct ev_ctx *ctx) {
     close(((struct epoll_api *) ctx->api)->fd);
-    npt_free(((struct epoll_api *) ctx->api)->events);
-    npt_free(ctx->api);
+    llb_free(((struct epoll_api *) ctx->api)->events);
+    llb_free(ctx->api);
 }
 
 static int ev_api_get_event_type(struct ev_ctx *ctx, int idx) {
@@ -170,17 +170,17 @@ struct poll_api {
 };
 
 static void ev_api_init(struct ev_ctx *ctx, int events_nr) {
-    struct poll_api *p_api = npt_malloc(sizeof(*p_api));
+    struct poll_api *p_api = llb_malloc(sizeof(*p_api));
     p_api->nfds = 0;
-    p_api->fds = npt_calloc(events_nr, sizeof(struct pollfd));
+    p_api->fds = llb_calloc(events_nr, sizeof(struct pollfd));
     p_api->events_monitored = events_nr;
     ctx->api = p_api;
     ctx->maxfd = events_nr;
 }
 
 static void ev_api_destroy(struct ev_ctx *ctx) {
-    npt_free(((struct poll_api *) ctx->api)->fds);
-    npt_free(ctx->api);
+    llb_free(((struct poll_api *) ctx->api)->fds);
+    llb_free(ctx->api);
 }
 
 static int ev_api_get_event_type(struct ev_ctx *ctx, int idx) {
@@ -216,7 +216,7 @@ static int ev_api_watch_fd(struct ev_ctx *ctx, int fd) {
     p_api->nfds++;
     if (p_api->nfds >= p_api->events_monitored) {
         p_api->events_monitored *= 2;
-        p_api->fds = npt_realloc(p_api->fds,
+        p_api->fds = llb_realloc(p_api->fds,
                                  p_api->events_monitored * sizeof(struct pollfd));
     }
     return EV_OK;
@@ -249,7 +249,7 @@ static int ev_api_register_event(struct ev_ctx *ctx, int fd, int mask) {
     p_api->nfds++;
     if (p_api->nfds >= p_api->events_monitored) {
         p_api->events_monitored *= 2;
-        p_api->fds = npt_realloc(p_api->fds,
+        p_api->fds = llb_realloc(p_api->fds,
                                  p_api->events_monitored * sizeof(struct pollfd));
     }
     return EV_OK;
@@ -290,7 +290,7 @@ static void ev_api_init(struct ev_ctx *ctx, int events_nr) {
      * 32 x 32 = 1024 as hard limit
      */
     assert(events_nr <= 1024);
-    struct select_api *s_api = npt_malloc(sizeof(*s_api));
+    struct select_api *s_api = llb_malloc(sizeof(*s_api));
     FD_ZERO(&s_api->rfds);
     FD_ZERO(&s_api->wfds);
     ctx->api = s_api;
@@ -298,7 +298,7 @@ static void ev_api_init(struct ev_ctx *ctx, int events_nr) {
 }
 
 static void ev_api_destroy(struct ev_ctx *ctx) {
-    npt_free(ctx->api);
+    llb_free(ctx->api);
 }
 
 static int ev_api_get_event_type(struct ev_ctx *ctx, int idx) {
@@ -446,7 +446,7 @@ static void ev_add_monitored(struct ev_ctx *ctx, int fd, int mask,
         ctx->maxevents = fd;
         if (fd > ctx->events_nr) {
             ctx->events_monitored =
-                npt_realloc(ctx->events_monitored, (fd + 1) * sizeof(struct ev));
+                llb_realloc(ctx->events_monitored, (fd + 1) * sizeof(struct ev));
             for (; i < ctx->maxevents; ++i)
                 ctx->events_monitored[i].mask = EV_NONE;
         }
@@ -473,7 +473,7 @@ void ev_init(struct ev_ctx *ctx, int events_nr) {
     ctx->fired_events = 0;
     ctx->maxevents = events_nr;
     ctx->events_nr = events_nr;
-    ctx->events_monitored = npt_calloc(events_nr, sizeof(struct ev));
+    ctx->events_monitored = llb_calloc(events_nr, sizeof(struct ev));
 }
 
 void ev_destroy(struct ev_ctx *ctx) {
@@ -482,7 +482,7 @@ void ev_destroy(struct ev_ctx *ctx) {
             ctx->events_monitored[i].mask != EV_NONE)
             ev_del_fd(ctx, ctx->events_monitored[i].fd);
     }
-    npt_free(ctx->events_monitored);
+    llb_free(ctx->events_monitored);
     ev_api_destroy(ctx);
 }
 

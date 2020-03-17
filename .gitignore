@@ -24,9 +24,9 @@ CMakeScripts
 Makefile
 cmake_install.cmake
 install_manifest.txt
-npt.build
+llb.build
 prof_output
-npt
+llb
 test
 compile_commands.json
 certs/

@@ -54,28 +54,28 @@
 
 // TLS versions
 
-#define NPT_TLSv1       0x01
-#define NPT_TLSv1_1     0x02
-#define NPT_TLSv1_2     0x04
-#define NPT_TLSv1_3     0x08
+#define LLB_TLSv1       0x01
+#define LLB_TLSv1_1     0x02
+#define LLB_TLSv1_2     0x04
+#define LLB_TLSv1_3     0x08
 
 // Default parameters
 
 #define VERSION                     "0.0.1"
 #define DEFAULT_LOG_LEVEL           DEBUG
-#define DEFAULT_CONF_PATH           "/etc/npt/npt.conf"
+#define DEFAULT_CONF_PATH           "/etc/llb/llb.conf"
 #define DEFAULT_HOSTNAME            "127.0.0.1"
 #define DEFAULT_PORT                8789
 #ifdef TLS1_3_VERSION
-#define DEFAULT_TLS_PROTOCOLS       (NPT_TLSv1_2 | NPT_TLSv1_3)
+#define DEFAULT_TLS_PROTOCOLS       (LLB_TLSv1_2 | LLB_TLSv1_3)
 #else
-#define DEFAULT_TLS_PROTOCOLS       NPT_TLSv1_2
+#define DEFAULT_TLS_PROTOCOLS       LLB_TLSv1_2
 #endif
 
 #define STREQ(s1, s2, len) strncasecmp(s1, s2, len) == 0 ? true : false
 
 struct config {
-    /* NPT version <MAJOR.MINOR.PATCH> */
+    /* llb version <MAJOR.MINOR.PATCH> */
     const char *version;
     /* Eventfd to break the epoll_wait loop in case of signals */
     int run;
