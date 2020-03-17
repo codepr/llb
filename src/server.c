@@ -437,19 +437,32 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
 
 /*
  * This function is called only if the client has sent a full stream of bytes
- * consisting of a complete packet as expected by the MQTT protocol and by the
- * declared length of the packet.
- * It uses eventloop APIs to react accordingly to the packet type received,
- * validating it before proceed to call handlers. Depending on the handler
- * called and its outcome, it'll enqueue an event to write a reply or just
- * reset the client state to allow reading some more packets.
+ * consisting of a complete HTTP header and body.
+ * According to the selected load-balancing algorithm specified in the
+ * configuration, it chooses a backend to connect to and redirects the request
+ * toward it by registering the newly connected descriptor to the event-loop
+ * with the write callback.
+ * Current algorithms supported are round-robin and hash-based routing.
  */
 static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
-    volatile atomic_int next = server.current_backend++ % conf->backends_nr;
-    struct backend *backend = &server.backends[next];
-    while (backend->alive == false) {
+    volatile atomic_int next = ATOMIC_VAR_INIT(0);
+    struct backend *backend = NULL;
+    if (conf->load_balancing == ROUND_ROBIN) {
         next = server.current_backend++ % conf->backends_nr;
         backend = &server.backends[next];
+        while (backend->alive == false) {
+            next = server.current_backend++ % conf->backends_nr;
+            backend = &server.backends[next];
+        }
+    } else if (conf->load_balancing == HASH_BALANCING) {
+        size_t hash = djb_hash((const char *) http->stream.buf);
+        next = hash % conf->backends_nr;
+        backend = &server.backends[next];
+        while (backend->alive == false) {
+            // FIXME dumb heuristic
+            next = djb_hash((const char *) http->stream.buf + next);
+            backend = &server.backends[next];
+        }
     }
     /*
      * Create a client structure to handle his context

@@ -66,6 +66,7 @@
 #define DEFAULT_CONF_PATH           "/etc/llb/llb.conf"
 #define DEFAULT_HOSTNAME            "127.0.0.1"
 #define DEFAULT_PORT                8789
+#define DEFAULT_LOAD_BALANCING      ROUND_ROBIN
 #ifdef TLS1_3_VERSION
 #define DEFAULT_TLS_PROTOCOLS       (LLB_TLSv1_2 | LLB_TLSv1_3)
 #else
@@ -103,6 +104,8 @@ struct config {
     char certfile[0xFFF];
     /* SSL - Key file location on filesystem */
     char keyfile[0xFFF];
+    /* Load-balancing algorithms */
+    int load_balancing;
 };
 
 extern struct config *conf;

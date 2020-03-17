@@ -53,6 +53,17 @@ static const struct llevel lmap[5] = {
     {"INFORMATION", INFORMATION}
 };
 
+static inline const char *strlb(int lb) {
+    switch (lb) {
+        case ROUND_ROBIN:
+            return "round-robin";
+        case HASH_BALANCING:
+            return "hash-balancing";
+        default:
+            return "unknown";
+    }
+}
+
 static inline void strip_spaces(char **str) {
     if (!*str) return;
     while (isspace(**str) && **str) ++(*str);
@@ -111,6 +122,7 @@ static void add_config_value(const char *key, const char *value) {
         strcpy(config.logpath, value);
     } else if (STREQ("frontends", key, klen) == true) {
         if (vlen == 0) return;
+        config.frontends_nr = 0;
         char *end_str;
         char *token = strtok_r((char *) value, ",", &end_str);
         if (!token) {
@@ -299,7 +311,7 @@ void config_set_default(void) {
     config.version = VERSION;
     config.loglevel = DEFAULT_LOG_LEVEL;
     memset(config.logpath, 0x00, 0xFFF);
-    config.frontends_nr = 0;
+    config.frontends_nr = 1;
     config.max_frontends_nr = 2;
     config.backends_nr = 0;
     config.max_backends_nr = 2;
@@ -311,6 +323,7 @@ void config_set_default(void) {
     config.tcp_backlog = SOMAXCONN;
     config.tls = false;
     config.tls_protocols = DEFAULT_TLS_PROTOCOLS;
+    config.load_balancing = ROUND_ROBIN;
 }
 
 void config_print_tls_versions(void) {
@@ -359,6 +372,7 @@ void config_print(void) {
     if (config.logpath[0])
         log_info("\tlogpath: %s", config.logpath);
     log_info("Event loop backend: %s", EVENTLOOP_BACKEND);
+    log_info("Load-balancing: %s", strlb(config.load_balancing));
 }
 
 void config_unload(void) {

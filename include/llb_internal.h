@@ -37,6 +37,10 @@
 #define LLB_SUCCESS  0
 #define LLB_FAILURE -1
 
+/* Load-balancing algorithms */
+#define ROUND_ROBIN    0
+#define HASH_BALANCING 1
+
 static inline void *llb_malloc(size_t size) {
     void *ptr = malloc(size);
     if (!ptr) {
@@ -70,6 +74,14 @@ static inline void *llb_realloc(void *ptr, size_t size) {
 
 static inline void llb_free(void *ptr) {
     free(ptr);
+}
+
+/* D. J. Bernstein hash function */
+static inline size_t djb_hash(const char *str) {
+    size_t hash = 5381;
+    while (*str)
+        hash = 33 * hash ^ (unsigned char) *str++;
+    return hash;
 }
 
 #endif
