@@ -33,6 +33,7 @@
 #include "log.h"
 #include "config.h"
 
+/* Global file handle for logging on disk */
 static FILE *fh = NULL;
 
 void npt_log_init(const char *file) {
