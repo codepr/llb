@@ -44,7 +44,7 @@
 #define EVENTLOOP_BACKEND "select"
 #endif
 
-#elif (defined(__APPLE__) || defined(__FreeBSD__) \
+#elif defined(__APPLE__) || defined(__FreeBSD__) \
        || defined(__OpenBSD__) || defined (__NetBSD__)
 /*
 #define KQUEUE 1
