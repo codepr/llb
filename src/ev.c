@@ -427,7 +427,101 @@ static inline struct ev *ev_api_fetch_event(const struct ev_ctx *ctx,
     return ctx->events_monitored + idx;
 }
 
-#endif // SELECT
+#elif defined(KQUEUE)
+
+#include <sys/types.h>
+#include <sys/event.h>
+#include <sys/time.h>
+
+struct kqueue_api {
+    int fd;
+    struct kevent *events;
+};
+
+static void ev_api_init(struct ev_ctx *ctx, int events_nr) {
+    struct kqueue_api *k_api = llb_malloc(sizeof(*k_api));
+    k_api->fd = kqueue();
+    k_api->events = llb_calloc(events_nr, sizeof(struct kevent));
+    ctx->api = k_api;
+    ctx->maxfd = events_nr;
+}
+
+static void ev_api_destroy(struct ev_ctx *ctx) {
+    close(((struct kqueue_api *) ctx->api)->fd);
+    llb_free(((struct kqueue_api *) ctx->api)->events);
+    llb_free(ctx->api);
+}
+
+static int ev_api_get_event_type(struct ev_ctx *ctx, int idx) {
+    struct kqueue_api *k_api = ctx->api;
+    int events = k_api->events[idx].flags;
+    int ev_mask = ctx->events_monitored[k_api->events[idx].data.fd].mask;
+    // We want to remember the previous events only if they're not of type
+    // CLOSE or TIMER
+    int mask = ev_mask & (EV_CLOSEFD | EV_TIMERFD) ? ev_mask : EV_NONE;
+    if (events & (EV_EOF) mask |= EV_DISCONNECT;
+    if (events & EVFILT_READ) mask |= EV_READ;
+    if (events & EVFILT_WRITE) mask |= EV_WRITE;
+    return mask;
+}
+
+static int ev_api_poll(struct ev_ctx *ctx, time_t timeout) {
+    struct kqueue_api *k_api = ctx->api;
+    int err = kevent(k_api->fd, NULL, 0, k_api->events, ctx->maxevents, NULL);
+    if (err < 0)
+        return -EV_ERR;
+    return err;
+}
+
+static int ev_api_watch_fd(struct ev_ctx *ctx, int fd) {
+    ev_api_register_event(ctx, fd, EV_READ);
+}
+
+static int ev_api_del_fd(struct ev_ctx *ctx, int fd) {
+    struct kqueue_api *k_api = ctx->api;
+    int mask = ctx->events_monitored[fd].mask;
+    struct kevent ke;
+    EV_SET(&ke, fd, mask, EV_DELETE, 0, 0, NULL);
+    if (kevent(k_api->fd, &ke, 1, NULL, 0, NULL) == -1)
+        return -1;
+    return 0;
+}
+
+static int ev_api_register_event(struct ev_ctx *ctx, int fd, int mask) {
+    struct kqueue_api *k_api = ctx->api;
+    struct kevent ke;
+    int op = 0;
+    if (mask & EV_READ) op |= EVFILT_READ;
+    if (mask & EV_WRITE) op |= EVFILT_WRITE;
+    EV_SET(&ke, fd, op, EV_ADD, 0, 0, NULL);
+    if (kevent(k_api->fd, &ke, 1, NULL, 0, NULL) == -1)
+        return -1;
+    return 0;
+}
+
+static int ev_api_fire_event(struct ev_ctx *ctx, int fd, int mask) {
+    struct kqueue_api *k_api = ctx->api;
+    struct kevent ke;
+    int op = 0;
+    if (mask & EV_READ|EV_EVENTFD) op |= EVFILT_READ;
+    if (mask & EV_WRITE) op |= EVFILT_WRITE;
+    EV_SET(&ke, fd, op, EV_ADD | EV_ENABLE, 0, 0, NULL);
+    if (kevent(k_api->fd, &ke, 1, NULL, 0, NULL) == -1)
+        return -1;
+    return 0;
+}
+
+/*
+ * Get the event on the idx position inside the events map. The event can also
+ * be an unset one (EV_NONE)
+ */
+static inline struct ev *ev_api_fetch_event(const struct ev_ctx *ctx,
+                                            int idx, int mask) {
+    int fd = ((struct kqueue_api *) ctx->api)->events[idx].data.fd;
+    return ctx->events_monitored + fd;
+}
+
+#endif // KQUEUE
 
 /*
  * Process the event at the position idx in the events_monitored array. Read or

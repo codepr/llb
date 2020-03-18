@@ -46,10 +46,9 @@
 
 #elif defined(__APPLE__) || defined(__FreeBSD__) \
        || defined(__OpenBSD__) || defined (__NetBSD__)
-/*
 #define KQUEUE 1
 #define EVENTLOOP_BACKEND "kqueue"
-*/
+#else
 #define SELECT 1
 #define EVENTLOOP_BACKEND "select"
 #endif // __linux__
@@ -63,7 +62,7 @@
 
 // Default parameters
 
-#define VERSION                     "0.0.3"
+#define VERSION                     "0.0.5"
 #define DEFAULT_LOG_LEVEL           DEBUG
 #define DEFAULT_CONF_PATH           "/etc/llb/llb.conf"
 #define DEFAULT_HOSTNAME            "127.0.0.1"
