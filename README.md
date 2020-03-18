@@ -4,7 +4,7 @@ llb
 ![llb CI](https://github.com/codepr/llb/workflows/llb%20CI/badge.svg?branch=master)
 
 (**L**)ittle(**L**)oad(**B**)alancer, a dead simple event-driven load-balancer.
-Supports Linux and (arguably) OSX through epoll and poll/select (kqueue
+Supports Linux (and arguably soon OSX) through epoll and poll/select (kqueue
 planned) as fallback, it uses an event-loop library borrowed from
 [Sol](https://github.com/codepr/sol.git).
 
@@ -17,7 +17,7 @@ Features:
 - Daemon mode
 - Multithread event-loop
 - Round-robin, hash-balancing, random-balancing
-- Pretty small and little dependencies (openssl)
+- Pretty small (< 2000 loc) and little dependencies (openssl)
 
 Next:
 
