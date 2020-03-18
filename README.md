@@ -56,6 +56,9 @@ frontends 127.0.0.1:8789,127.0.0.1:8790,127.0.0.1:8791
 # Backends is a pool of server to load-balance requests from clients
 backends 127.0.0.1:6090,127.0.0.1:6090,127.0.0.1:6090
 
+# Set round robin as balancing algorithm
+load_balancing round-robin
+
 # Logging configuration
 
 # Could be either DEBUG, INFO/INFORMATION, WARNING, ERROR

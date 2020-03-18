@@ -211,8 +211,8 @@ static void backends_healthcheck(struct ev_ctx *ctx, void *data) {
  */
 
 /*
- * All transactions are pre-allocated at the start of the server, but their buffers
- * (read and write) are not, they're lazily allocated with this function, meant
+ * All transactions are pre-allocated at the start of the server, but their buffer
+ * (read and write) is not, they're lazily allocated with this function, meant
  * to be called on the accept callback
  */
 static void http_transaction_init(struct http_transaction *http) {
@@ -472,9 +472,7 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
          * obtain the index of the backend, iterate over and over in case of dead
          * endpoints
          */
-        next = server.current_backend++ % conf->backends_nr;
-        backend = &server.backends[next];
-        while (backend->alive == false) {
+        while (!backend || backend->alive == false) {
             next = server.current_backend++ % conf->backends_nr;
             backend = &server.backends[next];
         }
@@ -485,12 +483,21 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
          * backend. Try hashing different parts of the request in case of dead
          * endpoints selected
          */
-        size_t hash = djb_hash((const char *) http->stream.buf);
-        next = hash % conf->backends_nr;
-        backend = &server.backends[next];
-        while (backend->alive == false) {
+        char *ptr = (char *) http->stream.buf;
+        while (!backend || backend->alive == false) {
             // FIXME dumb heuristic
-            next = djb_hash((const char *) http->stream.buf + next);
+            next = djb_hash(ptr + next) % conf->backends_nr;
+            backend = &server.backends[next];
+        }
+    } else if (conf->load_balancing == RANDOM_BALANCING) {
+        /*
+         * 3. RANDOM BALANCING, just distribute the traffic in random manner
+         * between all alive backends, it's the dumbest heuristic, can work as
+         * well as the ROUND ROBIN one when all the backends servers have
+         * similar specs
+         */
+        while (!backend || backend->alive == false) {
+            next = RANDOM(0, conf->backends_nr);
             backend = &server.backends[next];
         }
     }
@@ -498,6 +505,7 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
      * Create a connection structure to handle the client context of the
      * backend new communication channel.
      */
+    log_debug("Connecting to %i", next);
     connection_init(&http->pipe[BACKEND], conf->tls ? server.ssl_ctx : NULL);
     int fd = open_connection(&http->pipe[BACKEND], backend->host, backend->port);
     if (fd == 0)

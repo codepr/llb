@@ -59,6 +59,8 @@ static inline const char *strlb(int lb) {
             return "round-robin";
         case HASH_BALANCING:
             return "hash-balancing";
+        case RANDOM_BALANCING:
+            return "random-balancing";
         default:
             return "unknown";
     }
@@ -189,9 +191,14 @@ static void add_config_value(const char *key, const char *value) {
             || STREQ("roundrobin", value, 10))
             config.load_balancing = ROUND_ROBIN;
         else if (STREQ("hash-balancing", value, 14)
-                 || STREQ("hash balancing", value, 14)
-                 || STREQ("hashbalancing", value, 13))
+                 || STREQ("hash balancing", value, 14))
             config.load_balancing = HASH_BALANCING;
+        else if (STREQ("random-balancing", value, 16)
+                 || STREQ("random balancing", value, 16))
+            config.load_balancing = RANDOM_BALANCING;
+        else
+            log_warning("WARNING: Unsupported load-balancing algorithm, "
+                        "fallbacking to round-robin");
     }
 }
 

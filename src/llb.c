@@ -66,6 +66,9 @@ int main (int argc, char **argv) {
     signal(SIGINT, sigint_handler);
     signal(SIGTERM, sigint_handler);
 
+     /* Initialize random seed */
+    srand((unsigned) time(NULL));
+
     char *confpath = DEFAULT_CONF_PATH;
     int debug = 0, daemon = 0;
     int opt;

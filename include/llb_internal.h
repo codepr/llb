@@ -34,12 +34,15 @@
 #include <assert.h>
 #include <pthread.h>
 
+#define RANDOM(A,B) A + rand()/(RAND_MAX/(B - A))
+
 #define LLB_SUCCESS  0
 #define LLB_FAILURE -1
 
 /* Load-balancing algorithms */
-#define ROUND_ROBIN    0
-#define HASH_BALANCING 1
+#define ROUND_ROBIN      0
+#define HASH_BALANCING   1
+#define RANDOM_BALANCING 2
 
 static inline void *llb_malloc(size_t size) {
     void *ptr = malloc(size);
