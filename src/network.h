@@ -71,13 +71,15 @@ struct connection {
  */
 struct stream {
     size_t size;
+    size_t toread;
     size_t capacity;
     unsigned char *buf;
 };
 
 /*
  * The HTTP transaction can be summarized as a roughly simple state machine,
- * comprised by 2 states:
+ * comprised by 4 states:
+ *
  * - WAITING_REQUEST     It's the state required to receive the full byte stream
  *                       from a newly connected client. We wait for the
  *                       effective header + body in this state, which will

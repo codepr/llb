@@ -36,6 +36,8 @@
 #include "memorypool.h"
 #include "llb_internal.h"
 
+#define HTTP_HEADER_CRLF "\r\n\r\n"
+
 pthread_mutex_t mutex;
 
 /*
@@ -139,6 +141,15 @@ static void process_response(struct ev_ctx *, struct http_transaction *);
 /* Periodic routine to perform healthchecks on backends */
 static void backends_healthcheck(struct ev_ctx *, void *);
 
+/*
+ * Utility functions to parse HTTP header infos like content-length and
+ * transfer-encoding
+ */
+
+static inline void http_parse_header(struct http_transaction *);
+
+static inline void http_parse_content_length(struct http_transaction *);
+
 static inline void http_parse_header(struct http_transaction *);
 
 #define CHUNKED_COMPLETE(http) \
@@ -151,6 +162,31 @@ static inline void http_parse_header(struct http_transaction *);
         process_response((http)->ctx, (http));       \
     }                                                \
 } while (0);
+
+/* Parse header length by scanning all chars till the double CRLF */
+static inline int http_header_length(const struct http_transaction *http) {
+    char *ptr = (char *) http->stream.buf;
+    int count = 0;
+    while (*ptr) {
+        if (STREQ(ptr, HTTP_HEADER_CRLF, 4))
+            return count + 4;
+        ptr++;
+        count++;
+    }
+    return LLB_FAILURE;
+}
+
+static inline void http_parse_content_length(struct http_transaction *http) {
+    // XXX hack
+    int header_length = http_header_length(http);
+    const char *content_length =
+        strstr((const char *) http->stream.buf, "Content-Length");
+    char line[64];
+    snprintf(line, 64, "%s", content_length);
+    char *token = strtok(line, ":");
+    if (token)
+        http->stream.toread = atoi(token) + (http->stream.size - header_length);
+}
 
 // XXX Eyesore
 static inline void http_parse_header(struct http_transaction *http) {
@@ -218,6 +254,7 @@ static void http_transaction_init(struct http_transaction *http) {
     http->status = WAITING_REQUEST;
     http->encoding = UNSET;
     http->stream.size = 0;
+    http->stream.toread = 0;
     http->stream.capacity = MAX_HTTP_TRANSACTION_SIZE;
     if (!http->stream.buf)
         http->stream.buf =
@@ -232,6 +269,7 @@ static void http_transaction_init(struct http_transaction *http) {
  */
 static void http_transaction_close(struct http_transaction *http) {
     http->stream.size = 0;
+    http->stream.toread = 0;
     http->encoding = UNSET;
     http->status = WAITING_REQUEST;
     ev_del_fd(http->ctx, http->pipe[CLIENT].fd);
@@ -336,6 +374,7 @@ static void write_callback(struct ev_ctx *ctx, void *arg) {
              */
             if (http->status == FORWARDING_REQUEST) {
                 http->status = WAITING_RESPONSE;
+                // reset the pointer to the beginning of the buffer
                 http->stream.size = 0;
                 enqueue_event_read(http);
             } else if (http->status == FORWARDING_RESPONSE) {
