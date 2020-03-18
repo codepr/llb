@@ -17,8 +17,6 @@ jobs:
     
     steps:
     - uses: actions/checkout@v2
-    - name: install libssl + openssl
-      run: sudo apt-get install libssl-dev openssl
     - name: cmake
       run: cmake .
     - name: make
