@@ -19,6 +19,12 @@ set(LICENSE "BSD2 license")
 # Executable
 add_executable(llb ${SOURCES} include/llb_internal.h)
 
+if (APPLE)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -I/usr/local/opt/openssl/include")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I/usr/local/opt/openssl/include")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -L/usr/local/opt/openssl/lib")
+endif (APPLE)
+
 if (DEBUG)
     message(STATUS "Configuring build for debug")
     TARGET_LINK_LIBRARIES(llb pthread ssl crypto crypt)
