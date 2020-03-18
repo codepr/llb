@@ -239,6 +239,7 @@ static void http_transaction_close(struct http_transaction *http) {
     ev_del_fd(http->ctx, http->pipe[BACKEND].fd);
     close_connection(&http->pipe[CLIENT]);
     close_connection(&http->pipe[BACKEND]);
+    server.backends[http->backend_idx].active_connections--;
     memset(http->stream.buf, 0x00, http->stream.capacity);
 #if THREADSNR > 0
     pthread_mutex_lock(&mutex);
@@ -505,7 +506,6 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
      * Create a connection structure to handle the client context of the
      * backend new communication channel.
      */
-    log_debug("Connecting to %i", next);
     connection_init(&http->pipe[BACKEND], conf->tls ? server.ssl_ctx : NULL);
     int fd = open_connection(&http->pipe[BACKEND], backend->host, backend->port);
     if (fd == 0)
@@ -515,6 +515,8 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
         return;
     }
 
+    backend->active_connections++;
+    http->backend_idx = next;
     http->status = FORWARDING_REQUEST;
 
     /* Add it to the epoll loop */

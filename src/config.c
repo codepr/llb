@@ -151,6 +151,8 @@ static void add_config_value(const char *key, const char *value) {
             PARSE_CONFIG_COMMAS((char *) value,
                                 &config.backends[config.backends_nr],
                                 struct backend);
+            config.backends[config.backends_nr].active_connections =
+                ATOMIC_VAR_INIT(0);
         } else {
             do {
                 if (config.backends_nr >= config.max_backends_nr) {
@@ -161,6 +163,8 @@ static void add_config_value(const char *key, const char *value) {
                 }
                 PARSE_CONFIG_COMMAS(token, &config.backends[config.backends_nr++],
                                     struct backend);
+                config.backends[config.backends_nr-1].active_connections =
+                    ATOMIC_VAR_INIT(0);
             } while ((token = strtok_r(NULL, ",", &end_str)));
         }
     } else if (STREQ("tcp_backlog", key, klen) == true) {

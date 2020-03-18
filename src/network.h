@@ -117,6 +117,7 @@ enum content_encoding { UNSET, GENERIC, CHUNKED };
 struct http_transaction {
     int status; /* Current status of the HTTP transaction */
     int encoding;
+    int backend_idx;
     struct ev_ctx *ctx; /* An event context reference used to fire write events */
     struct stream stream;
     struct connection pipe[2];

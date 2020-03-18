@@ -85,6 +85,7 @@ struct frontend {
 struct backend {
     char host[0xFF];
     int port;
+    volatile atomic_int active_connections;
     bool alive;
 };
 

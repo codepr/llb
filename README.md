@@ -16,7 +16,7 @@ Features:
 - TLS encryption (to be refined)
 - Daemon mode
 - Multithread event-loop
-- Round-robin load-balancing
+- Round-robin, hash-balancing, random-balancing
 - Pretty small and little dependencies (openssl)
 
 Next:
