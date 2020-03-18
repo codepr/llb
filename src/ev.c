@@ -38,6 +38,16 @@
 
 #if defined(EPOLL)
 
+/*
+ * =========================
+ *  Epoll backend functions
+ * =========================
+ *
+ * The epoll_api structure contains the epoll fd and the events array needed to
+ * wait on events with epoll_wait(2) blocking call. It's the best multiplexing
+ * IO api available on Linux systems and thus the optimal choice.
+ */
+
 #include <sys/epoll.h>
 
 struct epoll_api {
@@ -161,6 +171,20 @@ static inline struct ev *ev_api_fetch_event(const struct ev_ctx *ctx,
 
 #elif defined(POLL)
 
+/*
+ * =========================
+ *  Poll backend functions
+ * =========================
+ *
+ * The poll_api structure contains the number of fds to monitor and the array
+ * of pollfd structures associated. This number must be adjusted everytime a
+ * client disconnect or a new connection have an fd > nfds to avoid iterating
+ * over closed fds everytime a new event is triggered.
+ * As select, poll iterate linearly over all the triggered events, without the
+ * hard limit of 1024 connections. It's the second best option available if no
+ * epoll or kqueue for Mac OSX are not present.
+ */
+
 #include <poll.h>
 
 struct poll_api {
@@ -277,6 +301,20 @@ static inline struct ev *ev_api_fetch_event(const struct ev_ctx *ctx,
 
 #elif defined(SELECT)
 
+/*
+ * ==========================
+ *  Select backend functions
+ * ==========================
+ *
+ * The select_api structure contains two copies of the read/write fdset, it's
+ * a measure to reset the original monitored fd_set after each select(2) call
+ * as it's not safe to iterate over the already selected sets, select(2) make
+ * side-effects on the passed in fd_sets.
+ * At each new event all the monitored fd_set are iterated and check for read
+ * or write readiness; the number of monitored sockets is hard-capped at 1024.
+ * It's the oldest multiplexing IO and practically obiquitous, making it the
+ * perfect fallback for every system.
+ */
 struct select_api {
     fd_set rfds, wfds;
     // Copy of the original fdset arrays to re-initialize them after each cycle

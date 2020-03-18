@@ -55,8 +55,7 @@
  * lazily
  */
 #define MAX_HTTP_TRANSACTIONS  1024 * 512
-
-#define MAX_HTTP_TRANSACTION_SIZE 2048
+#define MAX_HTTP_TRANSACTION_SIZE 4096
 
 /*
  * Error codes for packet reception, signaling respectively

@@ -608,10 +608,15 @@ struct connection *connection_new(const SSL_CTX *ssl_ctx) {
 }
 
 /*
- * 4 connection type agnostic functions to be used at a higher level, like the
+ * ======================================================
+ *  Main APIs to be used with connection structure
+ * ======================================================
+ *
+ * 5 connection type agnostic functions to be used at a higher level, like the
  * server module. They accept a connection structure as the first parameter
  * in order to leverage the previously set underlying function.
  */
+
 int accept_connection(struct connection *c, int fd) {
     return c->accept(c, fd);
 }

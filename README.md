@@ -17,7 +17,7 @@ Features:
 - Daemon mode
 - Multithread event-loop
 - Round-robin load-balancing
-- Pretty small and no dependencies
+- Pretty small and little dependencies (openssl)
 
 Next:
 

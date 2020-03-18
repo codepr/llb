@@ -36,6 +36,10 @@
 /* Global file handle for logging on disk */
 static FILE *fh = NULL;
 
+/*
+ * Tries to open in append mode a file on disk, to be called only if logging to
+ * disk is active
+ */
 void llb_log_init(const char *file) {
     if (!file) return;
     fh = fopen(file, "a+");
@@ -44,6 +48,10 @@ void llb_log_init(const char *file) {
                (unsigned long) time(NULL), file);
 }
 
+/*
+ * Close the previously opened file handler, to be called only after
+ * llb_log_init has been called
+ */
 void llb_log_close(void) {
     if (fh) {
         fflush(fh);
@@ -80,4 +88,3 @@ void llb_log(int level, const char *fmt, ...) {
     if (fh)
         fprintf(fh, "%lu %s\n", (unsigned long) time(NULL), msg);
 }
-

@@ -46,7 +46,11 @@ pthread_mutex_t mutex;
  * want to register cronjobs on that particular instance or not (to not repeat
  * useless cron jobs on multiple threads)
  */
-struct listen_payload { int *fds; int frontends_nr; bool cronjobs; };
+struct listen_payload {
+    int *fds;
+    int frontends_nr;
+    bool cronjobs;
+};
 
 /*
  * Server global instance, contains the backends reference, the current
@@ -90,17 +94,23 @@ struct server server;
  *          | ---------------------> | <-------------------- |
  *          |                        |                       |
  *
- * Right now we're using a single thread, but the whole method could be easily
- * distributed across a threadpool, by paying attention to the shared critical
- * parts on handler module.
- * The access to shared data strucures on the worker thread pool could be
- * guarded by a mutex or a spinlock, and being generally fast operations it
- * shouldn't suffer high contentions by the threads and thus being really fast.
+ * The whole method could be easily distributed across a threadpool, by paying
+ * attention to the shared critical parts on handler module.
+ * The access to shared data strucures could be guarded by a mutex or a
+ * spinlock, and being generally fast operations it shouldn't suffer high
+ * contentions by the threads and thus being really fast.
+ * The drawback of this approach is that the concurrency is not equally
+ * distributed across all threads, each thread has it's own eventloop and thus
+ * is responsible for a subset of connections, without any possibility of
+ * cooperation from other threads. This should be mitigated by the fact that
+ * this application mainly deals with short-lived connections so there's
+ * frequent turnover of monitored FDs, increasing the number of connections
+ * for each different thread.
  */
 
 static void http_transaction_init(struct http_transaction *);
 
-static void http_transaction_deactivate(struct http_transaction *);
+static void http_transaction_close(struct http_transaction *);
 
 // CALLBACKS for the eventloop
 static void accept_callback(struct ev_ctx *, void *);
@@ -221,7 +231,7 @@ static void http_transaction_init(struct http_transaction *http) {
  * according to its state (e.g. if it's a clean_session connected client or
  * not) and we allow the http memory pool to reclaim it
  */
-static void http_transaction_deactivate(struct http_transaction *http) {
+static void http_transaction_close(struct http_transaction *http) {
     http->stream.size = 0;
     http->encoding = UNSET;
     http->status = WAITING_REQUEST;
@@ -329,14 +339,14 @@ static void write_callback(struct ev_ctx *ctx, void *arg) {
                 http->stream.size = 0;
                 enqueue_event_read(http);
             } else if (http->status == FORWARDING_RESPONSE) {
-                http_transaction_deactivate(http);
+                http_transaction_close(http);
             }
             break;
         case -ERREAGAIN:
             enqueue_event_write(http);
             break;
         default:
-            http_transaction_deactivate(http);
+            http_transaction_close(http);
             break;
     }
 }
@@ -416,7 +426,7 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
              */
             log_error("Closing connection with %s -> %s: %s",
                       http->pipe[CLIENT].ip, http->pipe[BACKEND].ip, llberr(rc));
-            http_transaction_deactivate(http);
+            http_transaction_close(http);
             break;
         case -ERREAGAIN:
             // TODO, check for content-length in case of non-chunked mode

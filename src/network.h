@@ -154,7 +154,8 @@ int make_connection(const char *, int);
 
 /*
  * Send all data in a loop, avoiding interruption based on the kernel buffer
- * availability
+ * availability. The size member of the stream structure defines how many bytes
+ * to be pushed out.
  */
 ssize_t stream_send(int, struct stream *);
 
