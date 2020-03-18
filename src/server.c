@@ -27,7 +27,6 @@
 
 #include <fcntl.h>
 #include <errno.h>
-#include <unistd.h>
 #include <string.h>
 #include "ev.h"
 #include "log.h"

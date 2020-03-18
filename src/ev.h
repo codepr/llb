@@ -28,7 +28,7 @@
 #ifndef EV_H
 #define EV_H
 
-#include <sys/time.h>
+#include <time.h>
 
 #define EV_OK  0
 #define EV_ERR 1

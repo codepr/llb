@@ -25,11 +25,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <signal.h>
-#include <unistd.h>
 #include <sys/eventfd.h>
 #include "log.h"
 #include "config.h"

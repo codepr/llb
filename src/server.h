@@ -28,11 +28,7 @@
 #ifndef SERVER_H
 #define SERVER_H
 
-#include <pthread.h>
 #include <stdatomic.h>
-#include <sys/types.h>
-#include <sys/eventfd.h>
-#include <openssl/ssl.h>
 #include "network.h"
 
 /*

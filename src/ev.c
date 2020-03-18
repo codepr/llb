@@ -25,10 +25,8 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <time.h>
 #include <errno.h>
 #include <string.h>
-#include <unistd.h>
 #include <assert.h>
 #include <sys/eventfd.h>
 #include <sys/timerfd.h>

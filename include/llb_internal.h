@@ -32,7 +32,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <assert.h>
-#include <pthread.h>
 
 #define RANDOM(A,B) A + rand()/(RAND_MAX/(B - A))
 

@@ -27,18 +27,10 @@
  */
 
 #include <string.h>
-#include <stdlib.h>
-#include <errno.h>
 #include <netdb.h>
-#include <unistd.h>
 #include <fcntl.h>
-#include <sys/un.h>
-#include <sys/epoll.h>
-#include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <sys/types.h>
 #include <sys/socket.h>
-#include <sys/eventfd.h>
 #include <openssl/err.h>
 #include "config.h"
 #include "network.h"

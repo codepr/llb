@@ -28,7 +28,6 @@
 #include <ctype.h>
 #include <string.h>
 #include <assert.h>
-#include <sys/socket.h>
 #include <sys/eventfd.h>
 #include "log.h"
 #include "config.h"
