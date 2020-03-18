@@ -48,17 +48,15 @@ static void sigint_handler(int signum) {
 static const char *flag_description[] = {
     "Print this help",
     "Set a configuration file to load and use",
-    "Set the listening host address",
-    "Set the listening port",
     "Enable all logs, setting log level to DEBUG",
     "Run in daemon mode"
 };
 
 void print_help(char *me) {
-    printf("\nllb v%s MQTT broker 3.1.1\n\n", VERSION);
-    printf("Usage: %s [-a addr] [-p port] [-c conf] [-v|-d|-h]\n\n", me);
-    const char flags[6] = "hcapvd";
-    for (int i = 0; i < 6; ++i)
+    printf("\nllb v%s (L)ittle (L)oad (B)alancer\n\n", VERSION);
+    printf("Usage: %s [-c conf] [-v|-d|-h]\n\n", me);
+    const char flags[4] = "hcvd";
+    for (int i = 0; i < 4; ++i)
         printf(" -%c: %s\n", flags[i], flag_description[i]);
     printf("\n");
 }
@@ -90,9 +88,7 @@ int main (int argc, char **argv) {
                 print_help(argv[0]);
                 exit(EXIT_SUCCESS);
             default:
-                fprintf(stderr,
-                        "Usage: %s [-c conf] [-vhd]\n",
-                        argv[0]);
+                fprintf(stderr, "Usage: %s [-c conf] [-vhd]\n", argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
