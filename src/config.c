@@ -28,7 +28,11 @@
 #include <ctype.h>
 #include <string.h>
 #include <assert.h>
+#ifdef __linux__
 #include <sys/eventfd.h>
+#else
+#include <unistd.h>
+#endif
 #include "log.h"
 #include "config.h"
 #include "server.h"
@@ -338,7 +342,11 @@ void config_set_default(void) {
     config.backends = llb_calloc(config.max_backends_nr, sizeof(struct backend));
     strcpy(config.frontends[0].host, DEFAULT_HOSTNAME);
     config.frontends[0].port = DEFAULT_PORT;
+#ifdef __linux__
     config.run = eventfd(0, EFD_NONBLOCK);
+#else
+    pipe(config.run);
+#endif
     config.tcp_backlog = SOMAXCONN;
     config.tls = false;
     config.tls_protocols = DEFAULT_TLS_PROTOCOLS;

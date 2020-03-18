@@ -28,8 +28,10 @@
 #include <errno.h>
 #include <string.h>
 #include <assert.h>
+#ifdef __linux__
 #include <sys/eventfd.h>
 #include <sys/timerfd.h>
+#endif
 #include "ev.h"
 #include "config.h"
 #include "llb_internal.h"
@@ -438,13 +440,21 @@ static int ev_process_event(struct ev_ctx *ctx, int idx, int mask) {
     struct ev *e = ev_api_fetch_event(ctx, idx, mask);
     int err = 0, fired = 0, fd = e->fd;
     if (mask & EV_CLOSEFD) {
+#ifdef __linux__
         err = eventfd_read(fd, &(eventfd_t){0});
+#else
+        err = read(fd, &(unsigned long){0}, sizeof(unsigned long));
+#endif // __linux__
         if (err < 0) return EV_OK;
         e->rcallback(ctx, e->rdata);
         ++fired;
     } else {
         if (mask & EV_EVENTFD) {
+#ifdef __linux__
             err = eventfd_read(fd, &(eventfd_t){0L});
+#else
+            err = read(fd, &(unsigned long){0}, sizeof(unsigned long));
+#endif // __linux__
             close(fd);
         } else if (mask & EV_TIMERFD) {
             err = read(fd, &(unsigned long int){0L}, sizeof(unsigned long int));
@@ -586,7 +596,11 @@ int ev_register_event(struct ev_ctx *ctx, int fd, int mask,
     ret = ev_api_register_event(ctx, fd, mask);
     if (ret < 0) return -EV_ERR;
     if (mask & EV_EVENTFD)
+#ifdef __linux__
         (void) eventfd_write(fd, 1);
+#else
+        (void) write(fd, &(unsigned long){1}, sizeof(unsigned long));
+#endif
     return EV_OK;
 }
 
@@ -635,7 +649,11 @@ int ev_fire_event(struct ev_ctx *ctx, int fd, int mask,
     ret = ev_api_fire_event(ctx, fd, mask);
     if (ret < 0) return -EV_ERR;
     if (mask & EV_EVENTFD) {
+#ifdef __linux__
         ret = eventfd_write(fd, 1);
+#else
+        ret = write(fd, &(unsigned long){1}, sizeof(unsigned long));
+#endif // __linux__
         if (ret < 0) return -EV_ERR;
     }
     return EV_OK;

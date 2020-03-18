@@ -552,7 +552,11 @@ static void eventloop_start(void *args) {
     int *fds = loop_data->fds;
     ev_init(&ctx, EVENTLOOP_MAX_EVENTS);
     // Register stop event
+#ifdef __linux__
     ev_register_event(&ctx, conf->run, EV_CLOSEFD|EV_READ, stop_handler, NULL);
+#else
+    ev_register_event(&ctx, conf->run[1], EV_CLOSEFD|EV_READ, stop_handler, NULL);
+#endif
     // Register frontends listening FDs with accept callback
     for (int i = 0; i < loop_data->frontends_nr; ++i)
         ev_register_event(&ctx, fds[i], EV_READ, accept_callback, &fds[i]);

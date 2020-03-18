@@ -81,7 +81,11 @@ struct config {
     /* llb version <MAJOR.MINOR.PATCH> */
     const char *version;
     /* Eventfd to break the epoll_wait loop in case of signals */
+#ifdef __linux__
     int run;
+#else
+    int run[2];
+#endif // __linux__
     /* Logging level, to be set by reading configuration */
     int loglevel;
     /* Log file path */
