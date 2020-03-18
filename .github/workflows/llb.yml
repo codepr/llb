@@ -20,7 +20,11 @@ jobs:
     
     steps:
     - uses: actions/checkout@v2
-    - name: cmake
+    - name: cmake (Linux)
       run: cmake .
+      if: matrix.os == 'ubuntu-latest'
+    - name: cmake (macOS)
+      run: OPENSSL_ROOT_DIR=/usr/local/opt/openssl/ cmake .
+      if: matrix.os == 'macOS-latest'
     - name: make
       run: make
