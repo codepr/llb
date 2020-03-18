@@ -22,7 +22,8 @@ Features:
 Next:
 
 - Improvements on all previous points
-- More load-balancing methods
+- More load-balancing methods, e.g. leastconn for TCP
+- TCP long lived connections load-balancing
 
 ## Build
 
