@@ -496,14 +496,14 @@ static int ev_api_register_event(struct ev_ctx *ctx, int fd, int mask) {
 }
 
 static int ev_api_watch_fd(struct ev_ctx *ctx, int fd) {
-    ev_api_register_event(ctx, fd, EV_READ);
+    return ev_api_register_event(ctx, fd, EV_READ);
 }
 
 static int ev_api_fire_event(struct ev_ctx *ctx, int fd, int mask) {
     struct kqueue_api *k_api = ctx->api;
     struct kevent ke;
     int op = 0;
-    if (mask & EV_READ|EV_EVENTFD) op |= EVFILT_READ;
+    if (mask & (EV_READ | EV_EVENTFD)) op |= EVFILT_READ;
     if (mask & EV_WRITE) op |= EVFILT_WRITE;
     EV_SET(&ke, fd, op, EV_ADD | EV_ENABLE, 0, 0, NULL);
     if (kevent(k_api->fd, &ke, 1, NULL, 0, NULL) == -1)
@@ -517,7 +517,7 @@ static int ev_api_fire_event(struct ev_ctx *ctx, int fd, int mask) {
  */
 static inline struct ev *ev_api_fetch_event(const struct ev_ctx *ctx,
                                             int idx, int mask) {
-    int fd = ((struct kqueue_api *) ctx->api)->events[idx].data.fd;
+    int fd = ((struct kqueue_api *) ctx->api)->events[idx].ident;
     return ctx->events_monitored + fd;
 }
 
