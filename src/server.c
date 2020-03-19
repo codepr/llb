@@ -28,6 +28,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <string.h>
+#include <pthread.h>
 #include "ev.h"
 #include "log.h"
 #include "config.h"
