@@ -183,11 +183,10 @@ int make_connection(const char *host, int port) {
         goto err;
 
     /* build the server's address */
-    bzero((char *) &serveraddr, sizeof(serveraddr));
     serveraddr.sin_family = AF_INET;
-    bcopy((char *) server->h_addr,
-          (char *) &serveraddr.sin_addr.s_addr, server->h_length);
     serveraddr.sin_port = htons(port);
+    serveraddr.sin_addr = *((struct in_addr *) server->h_addr);
+    bzero(&(serveraddr.sin_zero), 8);
 
     (void) set_nonblocking(sfd);
     (void) set_tcpnodelay(sfd);
