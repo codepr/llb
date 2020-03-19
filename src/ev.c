@@ -455,11 +455,11 @@ static void ev_api_destroy(struct ev_ctx *ctx) {
 static int ev_api_get_event_type(struct ev_ctx *ctx, int idx) {
     struct kqueue_api *k_api = ctx->api;
     int events = k_api->events[idx].flags;
-    int ev_mask = ctx->events_monitored[k_api->events[idx].data.fd].mask;
+    int ev_mask = ctx->events_monitored[k_api->events[idx].ident].mask;
     // We want to remember the previous events only if they're not of type
     // CLOSE or TIMER
     int mask = ev_mask & (EV_CLOSEFD | EV_TIMERFD) ? ev_mask : EV_NONE;
-    if (events & EV_EOF) mask |= EV_DISCONNECT;
+    if (events & (EV_EOF | EV_ERROR)) mask |= EV_DISCONNECT;
     if (events & EVFILT_READ) mask |= EV_READ;
     if (events & EVFILT_WRITE) mask |= EV_WRITE;
     return mask;
