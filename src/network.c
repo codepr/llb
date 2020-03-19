@@ -339,7 +339,13 @@ SSL_CTX *create_ssl_context() {
 
     SSL_CTX *ctx;
 
+#ifdef __linux__
+    // TODO
+    // this check should be done against OpenSSL version > 1.1.0
     ctx = SSL_CTX_new(TLS_server_method());
+#else
+    ctx = SSL_CTX_new(SSLv23_method());
+#endif // __linux__
     if (!ctx) {
         perror("Unable to create SSL context");
         ERR_print_errors_fp(stderr);
