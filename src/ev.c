@@ -707,6 +707,7 @@ int ev_register_cron(struct ev_ctx *ctx,
                      void (*callback)(struct ev_ctx *, void *),
                      void *data,
                      long long s, long long ns) {
+#ifdef __linux__
     struct itimerspec timer;
     memset(&timer, 0x00, sizeof(timer));
     timer.it_value.tv_sec = s;
@@ -722,6 +723,15 @@ int ev_register_cron(struct ev_ctx *ctx,
     // Add the timer to the event loop
     ev_add_monitored(ctx, timerfd, EV_TIMERFD|EV_READ, callback, data);
     return ev_api_watch_fd(ctx, timerfd);
+#else
+    struct kqueue_api *k_api = ctx->api;
+    // milliseconds
+    unsigned period = (s * 1000)  + (ns / 100);
+    struct kevent ke;
+    EV_SET(&ke, 1, EVFILT_TIMER, EV_ADD | EV_ENABLE, 0, period, 0);
+    if (kevent(k_api->fd, &ke, 1, NULL, 0, NULL) == -1)
+        return -1;
+#endif // __linux__
 }
 
 /*
