@@ -62,7 +62,7 @@
 
 // Default parameters
 
-#define VERSION                     "0.0.5"
+#define VERSION                     "0.0.6"
 #define DEFAULT_LOG_LEVEL           DEBUG
 #define DEFAULT_CONF_PATH           "/etc/llb/llb.conf"
 #define DEFAULT_HOSTNAME            "127.0.0.1"

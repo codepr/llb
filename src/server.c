@@ -39,6 +39,10 @@
 
 #define HTTP_HEADER_CRLF "\r\n\r\n"
 
+/*
+ * To prevent weird bugs during init of transactions or allocation/freeing of
+ * resources from the memorypool
+ */
 pthread_mutex_t mutex;
 
 /*
@@ -509,40 +513,74 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
 static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
     volatile atomic_int next = ATOMIC_VAR_INIT(0);
     struct backend *backend = NULL;
-    if (conf->load_balancing == ROUND_ROBIN) {
-        /*
-         * 1. ROUND ROBIN balancing, just modulo the total number of backends to
-         * obtain the index of the backend, iterate over and over in case of dead
-         * endpoints
-         */
-        while (!backend || backend->alive == false) {
-            next = server.current_backend++ % conf->backends_nr;
-            backend = &server.backends[next];
-        }
-    } else if (conf->load_balancing == HASH_BALANCING) {
-        /*
-         * 2. HASH BALANCING, uses a hash function to obtain a value from the
-         * entire request and modulo the total number of the backends to select a
-         * backend. Try hashing different parts of the request in case of dead
-         * endpoints selected
-         */
-        char *ptr = (char *) http->stream.buf;
-        while (!backend || backend->alive == false) {
-            // FIXME dumb heuristic
-            next = djb_hash(ptr + next) % conf->backends_nr;
-            backend = &server.backends[next];
-        }
-    } else if (conf->load_balancing == RANDOM_BALANCING) {
-        /*
-         * 3. RANDOM BALANCING, just distribute the traffic in random manner
-         * between all alive backends, it's the dumbest heuristic, can work as
-         * well as the ROUND ROBIN one when all the backends servers have
-         * similar specs
-         */
-        while (!backend || backend->alive == false) {
-            next = RANDOM(0, conf->backends_nr);
-            backend = &server.backends[next];
-        }
+    char *ptr = NULL;
+    switch (conf->load_balancing) {
+        case ROUND_ROBIN:
+            /*
+             * 1. ROUND ROBIN balancing, just modulo the total number of backends to
+             * obtain the index of the backend, iterate over and over in case of dead
+             * endpoints
+             */
+            while (!backend || backend->alive == false) {
+                next = server.current_backend++ % conf->backends_nr;
+                backend = &server.backends[next];
+            }
+            break;
+        case HASH_BALANCING:
+            /*
+             * 2. HASH BALANCING, uses a hash function to obtain a value from the
+             * entire request and modulo the total number of the backends to select a
+             * backend. Try hashing different parts of the request in case of dead
+             * endpoints selected
+             */
+            ptr = (char *) http->stream.buf;
+            while (!backend || backend->alive == false) {
+                // FIXME dumb heuristic
+                next = djb_hash(ptr + next) % conf->backends_nr;
+                backend = &server.backends[next];
+            }
+            break;
+        case RANDOM_BALANCING:
+            /*
+             * 3. RANDOM BALANCING, just distribute the traffic in random manner
+             * between all alive backends, it's the dumbest heuristic, can work as
+             * well as the ROUND ROBIN one when all the backends servers have
+             * similar specs
+             */
+            while (!backend || backend->alive == false) {
+                next = RANDOM(0, conf->backends_nr);
+                backend = &server.backends[next];
+            }
+            break;
+        case LEASTCONN:
+            /*
+             * 4. LEASTCONN, iterate through all backends and choose the one
+             * with lower active connections. Not very useful when the majority
+             * of the traffic consists of short-lived connections, still makes
+             * sense for future TCP improvements of the load-balancer
+             */
+            while (!backend || backend->alive == false) {
+                int min = INT_MAX, curr_min = INT_MAX;
+                /*
+                 * We just iterate linearly through the entire backends array
+                 * as the number of backends shouldn't grow that large to
+                 * justify an efficient data-structure to sort out the backends
+                 * based on active connections
+                 */
+                for (int i = 0; i < conf->backends_nr; ++i) {
+                    if (min > curr_min) {
+                        min = curr_min;
+                        next = i;
+                    }
+                    if (curr_min > server.backends[i].active_connections)
+                        curr_min = server.backends[i].active_connections;
+                }
+                backend = &server.backends[next];
+            }
+            break;
+        default:
+            log_error("Unknown balancing algorithm");
+            exit(EXIT_FAILURE);
     }
     /*
      * Create a connection structure to handle the client context of the

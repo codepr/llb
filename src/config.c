@@ -64,6 +64,8 @@ static inline const char *strlb(int lb) {
             return "hash-balancing";
         case RANDOM_BALANCING:
             return "random-balancing";
+        case LEASTCONN:
+            return "leastconn";
         default:
             return "unknown";
     }
@@ -203,6 +205,8 @@ static void add_config_value(const char *key, const char *value) {
         else if (STREQ("random-balancing", value, 16)
                  || STREQ("random balancing", value, 16))
             config.load_balancing = RANDOM_BALANCING;
+        else if (STREQ("leastconn", value, 9))
+            config.load_balancing = LEASTCONN;
         else
             log_warning("WARNING: Unsupported load-balancing algorithm, "
                         "fallbacking to round-robin");

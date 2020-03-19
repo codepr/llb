@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.8)
 
 project(llb)
-set (VERSION 0.0.3)
+set (VERSION 0.0.6)
 
 OPTION(DEBUG "add debug flags" OFF)
 
