@@ -43,7 +43,7 @@
  * To prevent weird bugs during init of transactions or allocation/freeing of
  * resources from the memorypool
  */
-pthread_mutex_t mutex;
+static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /*
  * Auxiliary structure to be used as init argument for eventloop, fd is the
