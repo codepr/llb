@@ -473,10 +473,6 @@ static int ev_api_poll(struct ev_ctx *ctx, time_t timeout) {
     return err;
 }
 
-static int ev_api_watch_fd(struct ev_ctx *ctx, int fd) {
-    ev_api_register_event(ctx, fd, EV_READ);
-}
-
 static int ev_api_del_fd(struct ev_ctx *ctx, int fd) {
     struct kqueue_api *k_api = ctx->api;
     int mask = ctx->events_monitored[fd].mask;
@@ -497,6 +493,10 @@ static int ev_api_register_event(struct ev_ctx *ctx, int fd, int mask) {
     if (kevent(k_api->fd, &ke, 1, NULL, 0, NULL) == -1)
         return -1;
     return 0;
+}
+
+static int ev_api_watch_fd(struct ev_ctx *ctx, int fd) {
+    ev_api_register_event(ctx, fd, EV_READ);
 }
 
 static int ev_api_fire_event(struct ev_ctx *ctx, int fd, int mask) {
