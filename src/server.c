@@ -151,7 +151,7 @@ static inline void http_parse_header(struct http_transaction *);
 
 static inline void http_parse_content_length(struct http_transaction *);
 
-static inline void http_parse_header(struct http_transaction *);
+static inline int http_header_length(const struct http_transaction *);
 
 #define CHUNKED_COMPLETE(http) \
     strcmp((char *) (http)->stream.buf + (http)->stream.size - 5, "0\r\n\r\n") == 0
@@ -199,6 +199,9 @@ static inline void http_parse_header(struct http_transaction *http) {
         else
             http->encoding = GENERIC;
     }
+    // XXX
+    if (http->encoding == GENERIC || http->encoding == UNSET)
+        http_parse_content_length(http);
 }
 
 /* Simple error_code to string function, to be refined */
