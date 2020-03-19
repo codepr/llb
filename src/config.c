@@ -33,6 +33,7 @@
 #else
 #include <unistd.h>
 #endif
+#include <sys/resource.h>
 #include "log.h"
 #include "config.h"
 #include "server.h"
@@ -74,6 +75,20 @@ static inline const char *strlb(int lb) {
 static inline void strip_spaces(char **str) {
     if (!*str) return;
     while (isspace(**str) && **str) ++(*str);
+}
+
+/*
+ * Read the maximum number of file descriptor that can concurrently be open.
+ * This value is normally set to 1024, but can be easily tweaked with `ulimit`
+ * command
+ */
+static long get_fh_soft_limit(void) {
+    struct rlimit limit;
+    if (getrlimit(RLIMIT_NOFILE, &limit)) {
+        perror("Failed to get limit");
+        return -1;
+    }
+    return limit.rlim_cur;
 }
 
 /* Parse the integer part of a string, by effectively iterate through it and
@@ -389,6 +404,8 @@ void config_print(void) {
     log_info("llb v%s is starting", VERSION);
     log_info("Network settings:");
     log_info("\tTcp backlog: %d", config.tcp_backlog);
+    if (config.tls == true) config_print_tls_versions();
+    log_info("\tFile handles soft limit: %li", get_fh_soft_limit());
     log_info("  Frontends:");
     for (int i = 0; i < config.frontends_nr; ++i)
         log_info("\t%s:%i", config.frontends[i].host, config.frontends[i].port);
