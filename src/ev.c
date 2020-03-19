@@ -479,8 +479,8 @@ static int ev_api_del_fd(struct ev_ctx *ctx, int fd) {
     struct kevent ke;
     EV_SET(&ke, fd, mask, EV_DELETE, 0, 0, NULL);
     if (kevent(k_api->fd, &ke, 1, NULL, 0, NULL) == -1)
-        return -1;
-    return 0;
+        return -EV_ERR;
+    return EV_OK;
 }
 
 static int ev_api_register_event(struct ev_ctx *ctx, int fd, int mask) {
@@ -491,8 +491,8 @@ static int ev_api_register_event(struct ev_ctx *ctx, int fd, int mask) {
     if (mask & EV_WRITE) op |= EVFILT_WRITE;
     EV_SET(&ke, fd, op, EV_ADD, 0, 0, NULL);
     if (kevent(k_api->fd, &ke, 1, NULL, 0, NULL) == -1)
-        return -1;
-    return 0;
+        return -EV_ERR;
+    return EV_OK;
 }
 
 static int ev_api_watch_fd(struct ev_ctx *ctx, int fd) {
@@ -507,8 +507,8 @@ static int ev_api_fire_event(struct ev_ctx *ctx, int fd, int mask) {
     if (mask & EV_WRITE) op |= EVFILT_WRITE;
     EV_SET(&ke, fd, op, EV_ADD | EV_ENABLE, 0, 0, NULL);
     if (kevent(k_api->fd, &ke, 1, NULL, 0, NULL) == -1)
-        return -1;
-    return 0;
+        return -EV_ERR;
+    return EV_OK;
 }
 
 /*
@@ -730,7 +730,8 @@ int ev_register_cron(struct ev_ctx *ctx,
     struct kevent ke;
     EV_SET(&ke, 1, EVFILT_TIMER, EV_ADD | EV_ENABLE, 0, period, 0);
     if (kevent(k_api->fd, &ke, 1, NULL, 0, NULL) == -1)
-        return -1;
+        return -EV_ERR;
+    return EV_OK;
 #endif // __linux__
 }
 
