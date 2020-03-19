@@ -27,13 +27,13 @@ endif (APPLE)
 
 if (DEBUG)
     message(STATUS "Configuring build for debug")
-    TARGET_LINK_LIBRARIES(llb pthread ssl crypto crypt)
+    TARGET_LINK_LIBRARIES(llb pthread ssl crypto)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wunused -Werror -pedantic \
     -Wno-unused-result -std=c11 -ggdb -fsanitize=address \
     -fsanitize=undefined -fno-omit-frame-pointer -pg")
 else (DEBUG)
     message(STATUS "Configuring build for production")
-    TARGET_LINK_LIBRARIES(llb pthread ssl crypto crypt)
+    TARGET_LINK_LIBRARIES(llb pthread ssl crypto)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wunused -Werror -pedantic \
     -Wno-unused-result -std=c11 -O3")
 endif (DEBUG)
