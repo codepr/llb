@@ -338,13 +338,13 @@ SSL_CTX *create_ssl_context() {
 
     SSL_CTX *ctx;
 
-#ifdef __linux__
-    // TODO
-    // this check should be done against OpenSSL version > 1.1.0
+#if OPENSSL_VERSION_NUMBER >= 0x10100000
+    // TLS_server_method has been added with OpenSSL version > 1.1.0
+    // and should be used in place of SSLv* which is goind to be deprecated
     ctx = SSL_CTX_new(TLS_server_method());
 #else
     ctx = SSL_CTX_new(SSLv23_method());
-#endif // __linux__
+#endif // OPENSSL_VERSION_NUMBER
     if (!ctx) {
         perror("Unable to create SSL context");
         ERR_print_errors_fp(stderr);
