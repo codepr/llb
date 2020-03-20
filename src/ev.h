@@ -34,6 +34,12 @@
 #define EV_ERR 1
 
 /*
+ * Timeout value accepted by every IO mux implementation, -1 means no timeout
+ * at all, blocking undefinitely until new events arrive
+ */
+#define EVENTLOOP_TIMEOUT -1
+
+/*
  * Event types, meant to be OR-ed on a bitmask to define the type of an event
  * which can have multiple traits
  */

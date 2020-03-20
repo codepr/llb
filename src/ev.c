@@ -656,7 +656,7 @@ int ev_run(struct ev_ctx *ctx) {
          * blocks polling for events, -1 means forever. Returns only in case of
          * valid events ready to be processed or errors
          */
-        n = ev_poll(ctx, -1);
+        n = ev_poll(ctx, EVENTLOOP_TIMEOUT);
         if (n < 0) {
             /* Signals to all threads. Ignore it for now */
             if (errno == EINTR)

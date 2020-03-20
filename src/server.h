@@ -39,11 +39,9 @@
 #define THREADSNR 2
 
 /*
- * Epoll default settings for concurrent events monitored and timeout, -1
- * means no timeout at all, blocking undefinitely
+ * Epoll default settings for concurrent events monitored
  */
 #define EVENTLOOP_MAX_EVENTS    1024
-#define EVENTLOOP_TIMEOUT       -1
 
 /*
  * Initial memory allocation for HTTP transactions on server start-up, it
