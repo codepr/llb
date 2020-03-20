@@ -31,6 +31,8 @@
 #ifdef __linux__
 #include <sys/eventfd.h>
 #include <sys/timerfd.h>
+#else
+#include <sys/socket.h>
 #endif
 #include "ev.h"
 #include "config.h"
