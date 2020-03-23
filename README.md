@@ -19,7 +19,7 @@ Features:
 - TLS encryption (to be refined)
 - Daemon mode
 - Multithread event-loop
-- Round-robin, hash-balancing, random-balancing, leastconn
+- Round-robin, weighted round-robin, hash-balancing, random-balancing, leastconn
 - Pretty small (~2000 sloc) and little dependencies (openssl)
 
 Next:
