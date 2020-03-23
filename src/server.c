@@ -237,7 +237,13 @@ static void backends_healthcheck(struct ev_ctx *ctx, void *data) {
     (void) data;
     int fd = 0;
     for (int i = 0; i < conf->backends_nr; ++i) {
+#if THREADSNR > 0
+        pthread_mutex_lock(&mutex);
+#endif
         fd = make_connection(server.backends[i].host, server.backends[i].port);
+#if THREADSNR > 0
+        pthread_mutex_unlock(&mutex);
+#endif
         if (fd < 0) {
             server.backends[i].alive = false;
         } else {
@@ -617,13 +623,19 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
             log_error("Unknown balancing algorithm");
             exit(EXIT_FAILURE);
     }
-    log_debug("Forwarding to %s:%i (%i)", backend->host, backend->port, next);
+    //log_debug("Forwarding to %s:%i (%i)", backend->host, backend->port, next);
     /*
      * Create a connection structure to handle the client context of the
      * backend new communication channel.
      */
     connection_init(&http->pipe[BACKEND], conf->tls ? server.ssl_ctx : NULL);
+#if THREADSNR > 0
+        pthread_mutex_lock(&mutex);
+#endif
     int fd = open_connection(&http->pipe[BACKEND], backend->host, backend->port);
+#if THREADSNR > 0
+        pthread_mutex_unlock(&mutex);
+#endif
     if (fd == 0)
         return;
     if (fd < 0) {
@@ -740,8 +752,10 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
         ATOMIC_VAR_INIT(conf->load_balancing == WEIGHTED_ROUND_ROBIN ? -1 : 0) ;
     server.current_weight = ATOMIC_VAR_INIT(0);
     int weights[conf->backends_nr];
-    for (int i = 0; i < conf->backends_nr; ++i)
+    for (int i = 0; i < conf->backends_nr; ++i) {
         weights[i] = server.backends[i].weight;
+        server.backends[i].alive = ATOMIC_VAR_INIT(true);
+    }
     server.gcd = ATOMIC_VAR_INIT(GCD(weights, conf->backends_nr));
     server.pool =
         memorypool_new(MAX_HTTP_TRANSACTIONS, sizeof(struct http_transaction));
