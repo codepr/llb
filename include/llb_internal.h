@@ -39,10 +39,11 @@
 #define LLB_FAILURE -1
 
 /* Load-balancing algorithms */
-#define ROUND_ROBIN      0
-#define HASH_BALANCING   1
-#define RANDOM_BALANCING 2
-#define LEASTCONN        3
+#define ROUND_ROBIN          0
+#define HASH_BALANCING       1
+#define RANDOM_BALANCING     2
+#define LEASTCONN            3
+#define WEIGHTED_ROUND_ROBIN 4
 
 static inline void *llb_malloc(size_t size) {
     void *ptr = malloc(size);

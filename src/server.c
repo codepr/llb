@@ -578,10 +578,46 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
                 backend = &server.backends[next];
             }
             break;
+        case WEIGHTED_ROUND_ROBIN:
+            /*
+             * 5. WEIGHTED ROUND ROBIN, like the round robin selection but each
+             * backend has a weight value that defines the priority in
+             * receiving work (e.g. maybe some machines have better hw specs
+             * and thus can handle heavier loads -> higher weight value)
+             */
+            while (!backend || backend->alive == false) {
+                next = ATOMIC_VAR_INIT(server.current_backend);
+                while (1) {
+                    next = (next + 1) % conf->backends_nr;
+                    server.current_backend = ATOMIC_VAR_INIT(next);
+                    if (next == 0) {
+                        server.current_weight -= server.gcd;
+                        if (server.current_weight <= 0) {
+                            // get the max weight
+                            int max = 0;
+                            for (int i = 0; i < conf->backends_nr; ++i) {
+                                if (server.backends[i].weight > max)
+                                    max = server.backends[i].weight;
+                            }
+                            server.current_weight = max;
+                            if (server.current_weight == 0) {
+                                backend = &server.backends[next];
+                                break;
+                            }
+                        }
+                    }
+                    if (server.backends[next].weight >= server.current_weight) {
+                        backend = &server.backends[next];
+                        break;
+                    }
+                }
+            }
+            break;
         default:
             log_error("Unknown balancing algorithm");
             exit(EXIT_FAILURE);
     }
+    log_debug("Forwarding to %s:%i (%i)", backend->host, backend->port, next);
     /*
      * Create a connection structure to handle the client context of the
      * backend new communication channel.
@@ -683,10 +719,16 @@ static void enqueue_event_write(const struct http_transaction *http) {
 int start_server(const struct frontend *frontends, int frontends_nr) {
 
     /* Initialize global llb instance */
-    server.current_backend = ATOMIC_VAR_INIT(0);
+    conf->load_balancing = WEIGHTED_ROUND_ROBIN;
+    server.current_backend = ATOMIC_VAR_INIT(-1);
+    server.current_weight = ATOMIC_VAR_INIT(0);
+    server.gcd = ATOMIC_VAR_INIT(2);
     server.pool =
         memorypool_new(MAX_HTTP_TRANSACTIONS, sizeof(struct http_transaction));
     server.backends = conf->backends;
+    server.backends[0].weight = 8;
+    server.backends[1].weight = 4;
+    server.backends[2].weight = 2;
 
     /* Setup SSL in case of flag true */
     if (conf->tls == true) {

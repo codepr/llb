@@ -79,6 +79,7 @@ struct frontend {
 struct backend {
     char host[0xFF];
     int port;
+    int weight;  // to be ignored in case of balancing != WEIGHTED_ROUND_ROBIN
     volatile atomic_int active_connections;
     volatile atomic_bool alive;
 };
@@ -95,6 +96,8 @@ struct backend {
  */
 struct server {
     volatile atomic_int current_backend;
+    volatile atomic_int current_weight;
+    volatile atomic_int gcd;
     struct memorypool *pool; /* A memory pool for clients allocation */
     struct backend *backends; /* A pointer to the backends registered */
     SSL_CTX *ssl_ctx; /* Application TLS context */
