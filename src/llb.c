@@ -53,15 +53,16 @@ static const char *flag_description[] = {
     "Print this help",
     "Set a configuration file to load and use",
     "Specify a list of backends in the form of host:port:weight, weight is optional",
+    "Specify the load-balancing type, between [round-robin, random, hash, leastconn, weighted-round-robin]",
     "Enable all logs, setting log level to DEBUG",
     "Run in daemon mode"
 };
 
 void print_help(char *me) {
     printf("\nllb v%s (L)ittle (L)oad (B)alancer\n\n", VERSION);
-    printf("Usage: %s [-c conf] -b [backends..] [-v|-d|-h]\n\n", me);
-    const char flags[5] = "hcbvd";
-    for (int i = 0; i < 5; ++i)
+    printf("Usage: %s [-c conf] -b [backends..] -l [load-balancing] [-v|-d|-h]\n\n", me);
+    const char flags[6] = "hcblvd";
+    for (int i = 0; i < 6; ++i)
         printf(" -%c: %s\n", flags[i], flag_description[i]);
     printf("\n");
 }
@@ -75,20 +76,23 @@ int main (int argc, char **argv) {
     srand((unsigned) time(NULL));
 
     char *confpath = DEFAULT_CONF_PATH;
-    char *backends = NULL;
+    char *backends = NULL, *load_balancing = NULL;
     int debug = 0, daemon = 0;
     int opt;
 
     // Set default configuration
     config_set_default();
 
-    while ((opt = getopt(argc, argv, "c:b:vhd:")) != -1) {
+    while ((opt = getopt(argc, argv, "c:b:l:vhd:")) != -1) {
         switch (opt) {
             case 'c':
                 confpath = optarg;
                 break;
             case 'b':
                 backends = optarg;
+                break;
+            case 'l':
+                load_balancing = optarg;
                 break;
             case 'v':
                 debug = 1;
@@ -136,6 +140,26 @@ int main (int argc, char **argv) {
                     conf->backends[conf->backends_nr-1].active_connections =
                         ATOMIC_VAR_INIT(0);
                 } while ((token = strtok_r(NULL, ",", &end_str)));
+            }
+            /*
+             * If load-balancing is specifyed set it, disk config has precedence
+             * anyway on this
+             */
+            if (load_balancing) {
+                if (STREQ("round-robin", load_balancing, 11)
+                    || STREQ("roundrobin", load_balancing, 10))
+                    conf->load_balancing = ROUND_ROBIN;
+                else if (STREQ("hash", load_balancing, 4))
+                    conf->load_balancing = HASH_BALANCING;
+                else if (STREQ("random", load_balancing, 6))
+                    conf->load_balancing = RANDOM_BALANCING;
+                else if (STREQ("leastconn", load_balancing, 9))
+                    conf->load_balancing = LEASTCONN;
+                else if (STREQ("weighted-round-robin", load_balancing, 20))
+                    conf->load_balancing = WEIGHTED_ROUND_ROBIN;
+                else
+                    log_warning("WARNING: Unsupported load-balancing algorithm, "
+                                "fallbacking to round-robin");
             }
         }
     }
