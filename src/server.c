@@ -711,6 +711,22 @@ static void enqueue_event_write(const struct http_transaction *http) {
                       EV_WRITE, write_callback, (void *) http);
 }
 
+static inline int gcd(int a, int b) {
+    if (a == 0)
+        return b;
+    return gcd(b % a, a);
+}
+
+static inline int GCD(int *arr, size_t size) {
+    int result = arr[0];
+    for (int i = 1; i < size; ++i) {
+        result = gcd(arr[i], result);
+        if (result == 1)
+            return 1;
+    }
+    return result;
+}
+
 /*
  * Main entry point for the server, to be called with an array of frontend
  * structs and its length. Every frontend store an address and a port to start
@@ -719,16 +735,16 @@ static void enqueue_event_write(const struct http_transaction *http) {
 int start_server(const struct frontend *frontends, int frontends_nr) {
 
     /* Initialize global llb instance */
-    conf->load_balancing = WEIGHTED_ROUND_ROBIN;
-    server.current_backend = ATOMIC_VAR_INIT(-1);
+    server.backends = conf->backends;
+    server.current_backend =
+        ATOMIC_VAR_INIT(conf->load_balancing == WEIGHTED_ROUND_ROBIN ? -1 : 0) ;
     server.current_weight = ATOMIC_VAR_INIT(0);
-    server.gcd = ATOMIC_VAR_INIT(2);
+    int weights[conf->backends_nr];
+    for (int i = 0; i < conf->backends_nr; ++i)
+        weights[i] = server.backends[i].weight;
+    server.gcd = ATOMIC_VAR_INIT(GCD(weights, conf->backends_nr));
     server.pool =
         memorypool_new(MAX_HTTP_TRANSACTIONS, sizeof(struct http_transaction));
-    server.backends = conf->backends;
-    server.backends[0].weight = 8;
-    server.backends[1].weight = 4;
-    server.backends[2].weight = 2;
 
     /* Setup SSL in case of flag true */
     if (conf->tls == true) {

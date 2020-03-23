@@ -67,6 +67,8 @@ static inline const char *strlb(int lb) {
             return "random-balancing";
         case LEASTCONN:
             return "leastconn";
+        case WEIGHTED_ROUND_ROBIN:
+            return "weighted round-robin";
         default:
             return "unknown";
     }
@@ -111,6 +113,10 @@ int parse_int(const char *string) {
     snprintf(tmp, toklen + 1, "%s", (token));                   \
     char *host = strtok_r(tmp, ":", &end_token);                \
     char *port = strtok_r(NULL, ":", &end_token);               \
+    char *weight = strtok_r(NULL, ":", &end_token);             \
+    if (weight != NULL) {                                       \
+        t->weight = atoi(weight);                               \
+    }                                                           \
     snprintf(t->host, strlen(host) + 1, "%s", host);            \
     t->port = atoi(port);                                       \
 } while (0);
@@ -211,17 +217,16 @@ static void add_config_value(const char *key, const char *value) {
         }
     } else if (STREQ("load_balancing", key, klen) == true) {
         if (STREQ("round-robin", value, 11)
-            || STREQ("round robin", value, 11)
             || STREQ("roundrobin", value, 10))
             config.load_balancing = ROUND_ROBIN;
-        else if (STREQ("hash-balancing", value, 14)
-                 || STREQ("hash balancing", value, 14))
+        else if (STREQ("hash-balancing", value, 14))
             config.load_balancing = HASH_BALANCING;
-        else if (STREQ("random-balancing", value, 16)
-                 || STREQ("random balancing", value, 16))
+        else if (STREQ("random-balancing", value, 16))
             config.load_balancing = RANDOM_BALANCING;
         else if (STREQ("leastconn", value, 9))
             config.load_balancing = LEASTCONN;
+        else if (STREQ("weighted-round-robin", value, 20))
+            config.load_balancing = WEIGHTED_ROUND_ROBIN;
         else
             log_warning("WARNING: Unsupported load-balancing algorithm, "
                         "fallbacking to round-robin");
@@ -412,7 +417,8 @@ void config_print(void) {
     if (config.backends_nr > 0) {
         log_info("  Backends:");
         for (int i = 0; i < config.backends_nr; ++i)
-            log_info("\t%s:%i", config.backends[i].host, config.backends[i].port);
+            log_info("\t%s:%i %i", config.backends[i].host,
+                     config.backends[i].port, config.backends[i].weight);
     }
     if (config.tls == true) config_print_tls_versions();
     log_info("Logging:");

@@ -68,6 +68,7 @@
 struct frontend {
     char host[0xFF];
     int port;
+    int weight; // unused, ugly hack for config
 };
 
 /*
