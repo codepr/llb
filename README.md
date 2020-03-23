@@ -36,8 +36,11 @@ $ cmake . && make
 
 ## Quickstart
 
+Backend servers at http://localhost:8080 and http://localhost:8081, balancing
+strategy WEIGHTED-ROUND-ROBIN
+
 ```sh
-$ ./llb -v
+$ ./llb -v -b http://localhost:8080:2,http://localhost:8081:4 -l weighted-round-robin
 ```
 
 A simple configuration can be passed in with `-c` flag:
