@@ -28,6 +28,7 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+#include <string.h>
 #include <stdbool.h>
 
 // Eventloop backend check
@@ -76,6 +77,22 @@
 
 #define STREQ(s1, s2, len) strncasecmp(s1, s2, len) == 0 ? true : false
 
+#define PARSE_CONFIG_COMMAS(token, target, type) do {           \
+    type *t = (type *) (target);                                \
+    char *end_token;                                            \
+    size_t toklen = strlen((token));                            \
+    char tmp[toklen + 1];                                       \
+    snprintf(tmp, toklen + 1, "%s", (token));                   \
+    char *host = strtok_r(tmp, ":", &end_token);                \
+    char *port = strtok_r(NULL, ":", &end_token);               \
+    char *weight = strtok_r(NULL, ":", &end_token);             \
+    if (weight != NULL) {                                       \
+        t->weight = atoi(weight);                               \
+    }                                                           \
+    snprintf(t->host, strlen(host) + 1, "%s", host);            \
+    t->port = atoi(port);                                       \
+} while (0);
+
 struct config {
     /* llb version <MAJOR.MINOR.PATCH> */
     const char *version;
@@ -118,7 +135,7 @@ extern struct config *conf;
 int parse_int(const char *);
 void config_set_default(void);
 void config_print(void);
-int config_load(const char *);
+bool config_load(const char *);
 void config_unload(void);
 
 #endif

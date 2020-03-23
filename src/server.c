@@ -748,15 +748,17 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
 
     /* Initialize global llb instance */
     server.backends = conf->backends;
+    for (int i = 0; i < conf->backends_nr; ++i)
+        server.backends[i].alive = ATOMIC_VAR_INIT(true);
     server.current_backend =
         ATOMIC_VAR_INIT(conf->load_balancing == WEIGHTED_ROUND_ROBIN ? -1 : 0) ;
     server.current_weight = ATOMIC_VAR_INIT(0);
-    int weights[conf->backends_nr];
-    for (int i = 0; i < conf->backends_nr; ++i) {
-        weights[i] = server.backends[i].weight;
-        server.backends[i].alive = ATOMIC_VAR_INIT(true);
+    if (conf->load_balancing == WEIGHTED_ROUND_ROBIN) {
+        int weights[conf->backends_nr];
+        for (int i = 0; i < conf->backends_nr; ++i)
+            weights[i] = server.backends[i].weight;
+        server.gcd = ATOMIC_VAR_INIT(GCD(weights, conf->backends_nr));
     }
-    server.gcd = ATOMIC_VAR_INIT(GCD(weights, conf->backends_nr));
     server.pool =
         memorypool_new(MAX_HTTP_TRANSACTIONS, sizeof(struct http_transaction));
 

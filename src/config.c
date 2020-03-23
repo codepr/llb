@@ -105,22 +105,6 @@ int parse_int(const char *string) {
     return n;
 }
 
-#define PARSE_CONFIG_COMMAS(token, target, type) do {           \
-    type *t = (type *) (target);                                \
-    char *end_token;                                            \
-    size_t toklen = strlen((token));                            \
-    char tmp[toklen + 1];                                       \
-    snprintf(tmp, toklen + 1, "%s", (token));                   \
-    char *host = strtok_r(tmp, ":", &end_token);                \
-    char *port = strtok_r(NULL, ":", &end_token);               \
-    char *weight = strtok_r(NULL, ":", &end_token);             \
-    if (weight != NULL) {                                       \
-        t->weight = atoi(weight);                               \
-    }                                                           \
-    snprintf(t->host, strlen(host) + 1, "%s", host);            \
-    t->port = atoi(port);                                       \
-} while (0);
-
 static int parse_config_tls_protocols(char *token) {
     int protocols = 0;
     if (STREQ(token, "tlsv1_1", 7) == true)
@@ -291,7 +275,7 @@ char *memory_to_string(size_t memory) {
     return mstring;
 }
 
-int config_load(const char *configpath) {
+bool config_load(const char *configpath) {
 
     assert(configpath);
 

@@ -52,15 +52,16 @@ static void sigint_handler(int signum) {
 static const char *flag_description[] = {
     "Print this help",
     "Set a configuration file to load and use",
+    "Specify a list of backends in the form of host:port:weight, weight is optional",
     "Enable all logs, setting log level to DEBUG",
     "Run in daemon mode"
 };
 
 void print_help(char *me) {
     printf("\nllb v%s (L)ittle (L)oad (B)alancer\n\n", VERSION);
-    printf("Usage: %s [-c conf] [-v|-d|-h]\n\n", me);
-    const char flags[4] = "hcvd";
-    for (int i = 0; i < 4; ++i)
+    printf("Usage: %s [-c conf] -b [backends..] [-v|-d|-h]\n\n", me);
+    const char flags[5] = "hcbvd";
+    for (int i = 0; i < 5; ++i)
         printf(" -%c: %s\n", flags[i], flag_description[i]);
     printf("\n");
 }
@@ -74,16 +75,20 @@ int main (int argc, char **argv) {
     srand((unsigned) time(NULL));
 
     char *confpath = DEFAULT_CONF_PATH;
+    char *backends = NULL;
     int debug = 0, daemon = 0;
     int opt;
 
     // Set default configuration
     config_set_default();
 
-    while ((opt = getopt(argc, argv, "c:vhd:")) != -1) {
+    while ((opt = getopt(argc, argv, "c:b:vhd:")) != -1) {
         switch (opt) {
             case 'c':
                 confpath = optarg;
+                break;
+            case 'b':
+                backends = optarg;
                 break;
             case 'v':
                 debug = 1;
@@ -95,7 +100,7 @@ int main (int argc, char **argv) {
                 print_help(argv[0]);
                 exit(EXIT_SUCCESS);
             default:
-                fprintf(stderr, "Usage: %s [-c conf] [-vhd]\n", argv[0]);
+                fprintf(stderr, "Usage: %s [-c conf] -b [backends..][-vhd]\n", argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
@@ -104,7 +109,36 @@ int main (int argc, char **argv) {
     conf->loglevel = debug == 1 ? DEBUG : WARNING;
 
     // Try to load a configuration, if found
-    config_load(confpath);
+    if (!config_load(confpath)) {
+        if (!backends) {
+            print_help(argv[0]);
+            exit(EXIT_FAILURE);
+        } else {
+            char *end_str;
+            char *token = strtok_r((char *) backends, ",", &end_str);
+            if (!token) {
+                PARSE_CONFIG_COMMAS(backends,
+                                    &conf->backends[conf->backends_nr],
+                                    struct backend);
+                conf->backends[conf->backends_nr].active_connections =
+                    ATOMIC_VAR_INIT(0);
+            } else {
+                do {
+                    if (conf->backends_nr >= conf->max_backends_nr) {
+                        conf->max_backends_nr *= 2;
+                        conf->backends =
+                            llb_realloc(conf->backends,
+                                        conf->max_backends_nr * sizeof(struct backend));
+                    }
+                    PARSE_CONFIG_COMMAS(token,
+                                        &conf->backends[conf->backends_nr++],
+                                        struct backend);
+                    conf->backends[conf->backends_nr-1].active_connections =
+                        ATOMIC_VAR_INIT(0);
+                } while ((token = strtok_r(NULL, ",", &end_str)));
+            }
+        }
+    }
 
     llb_log_init(conf->logpath);
 
