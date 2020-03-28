@@ -115,6 +115,7 @@ struct tcp_session {
     int status; /* Current status of the tcp session */
     struct stream stream;
     struct connection pipe[2];
+    struct ev_ctx *ctx; /* An event context reference used to fire write events */
 };
 
 /*
@@ -127,7 +128,6 @@ struct http_transaction {
     struct tcp_session tcp_session;
     int encoding;
     int backend_idx;
-    struct ev_ctx *ctx; /* An event context reference used to fire write events */
 };
 
 #define CLIENT  0

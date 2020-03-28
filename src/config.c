@@ -214,6 +214,11 @@ static void add_config_value(const char *key, const char *value) {
         else
             log_warning("WARNING: Unsupported load-balancing algorithm, "
                         "fallbacking to round-robin");
+    } else if (STREQ("mode", key, klen) == true) {
+        if (STREQ("http", value, 4))
+            config.mode = LLB_HTTP_MODE;
+        else if (STREQ("tcp", value, 3))
+            config.mode = LLB_TCP_MODE;
     }
 }
 
@@ -346,8 +351,10 @@ void config_set_default(void) {
     config.max_frontends_nr = 2;
     config.backends_nr = 0;
     config.max_backends_nr = 2;
-    config.frontends = llb_calloc(config.max_frontends_nr, sizeof(struct frontend));
-    config.backends = llb_calloc(config.max_backends_nr, sizeof(struct backend));
+    config.frontends = llb_calloc(config.max_frontends_nr,
+                                  sizeof(struct frontend));
+    config.backends = llb_calloc(config.max_backends_nr,
+                                 sizeof(struct backend));
     strcpy(config.frontends[0].host, DEFAULT_HOSTNAME);
     config.frontends[0].port = DEFAULT_PORT;
 #ifdef __linux__
@@ -358,7 +365,8 @@ void config_set_default(void) {
     config.tcp_backlog = SOMAXCONN;
     config.tls = false;
     config.tls_protocols = DEFAULT_TLS_PROTOCOLS;
-    config.load_balancing = ROUND_ROBIN;
+    config.load_balancing = DEFAULT_LOAD_BALANCING;
+    config.mode = DEFAULT_MODE;
 }
 
 void config_print_tls_versions(void) {

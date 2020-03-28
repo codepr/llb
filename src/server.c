@@ -121,27 +121,37 @@ static void http_transaction_close(struct http_transaction *);
 // CALLBACKS for the eventloop
 static void accept_callback(struct ev_ctx *, void *);
 
-static void read_callback(struct ev_ctx *, void *);
+static void http_read_callback(struct ev_ctx *, void *);
 
-static void write_callback(struct ev_ctx *, void *);
+static void tcp_read_callback(struct ev_ctx *, void *);
 
-static void enqueue_event_read(const struct http_transaction *);
+static void http_write_callback(struct ev_ctx *, void *);
 
-static void enqueue_event_write(const struct http_transaction *);
+static void tcp_write_callback(struct ev_ctx *, void *);
+
+static void enqueue_http_read(const struct http_transaction *);
+
+static void enqueue_http_write(const struct http_transaction *);
+
+static void enqueue_tcp_read(const struct tcp_session *);
+
+static void enqueue_tcp_write(const struct tcp_session *);
+
+static void route_tcp_to_backend(struct ev_ctx *, struct tcp_session *);
 
 /*
  * Processing request function, will be applied on fully formed request
  * received on read_callback callback, requests are the one incoming from
  * connected clients toward backends
  */
-static void process_request(struct ev_ctx *, struct http_transaction *);
+static void process_http_request(struct ev_ctx *, struct http_transaction *);
 
 /*
  * Processing response function, will be applied on fully formed received
  * responses on read_callback callback, responses are the one returned by
  * connected backends back to requesting clients
  */
-static void process_response(struct ev_ctx *, struct http_transaction *);
+static void process_http_response(struct ev_ctx *, struct http_transaction *);
 
 /* Periodic routine to perform healthchecks on backends */
 static void backends_healthcheck(struct ev_ctx *, void *);
@@ -160,11 +170,11 @@ static inline int http_header_length(const struct http_transaction *);
 #define CHUNKED_COMPLETE(http) \
     strcmp((char *) (http)->tcp_session.stream.buf + (http)->tcp_session.stream.size - 5, "0\r\n\r\n") == 0
 
-#define PROCESS_STREAM(http) do {                                \
+#define PROCESS_HTTP_STREAM(http) do {                           \
     if ((http)->tcp_session.status == WAITING_REQUEST) {         \
-        process_request((http)->ctx, (http));                    \
+        process_http_request((http)->tcp_session.ctx, (http));   \
     } else if ((http)->tcp_session.status == WAITING_RESPONSE) { \
-        process_response((http)->ctx, (http));                   \
+        process_http_response((http)->tcp_session.ctx, (http));  \
     }                                                            \
 } while (0);
 
@@ -260,6 +270,27 @@ static void backends_healthcheck(struct ev_ctx *ctx, void *data) {
  * ======================================================
  */
 
+static void tcp_session_init(struct tcp_session *tcp) {
+    tcp->status = WAITING_REQUEST;
+    tcp->stream.size = 0;
+    tcp->stream.toread = 0;
+    tcp->stream.capacity = MAX_HTTP_TRANSACTION_SIZE;
+    if (!tcp->stream.buf)
+        tcp->stream.buf =
+            llb_calloc(MAX_HTTP_TRANSACTION_SIZE, sizeof(unsigned char));
+}
+
+static void tcp_session_close(struct tcp_session *tcp) {
+    tcp->stream.size = 0;
+    tcp->stream.toread = 0;
+    tcp->status = WAITING_REQUEST;
+    ev_del_fd(tcp->ctx, tcp->pipe[CLIENT].fd);
+    ev_del_fd(tcp->ctx, tcp->pipe[BACKEND].fd);
+    close_connection(&tcp->pipe[CLIENT]);
+    close_connection(&tcp->pipe[BACKEND]);
+    memset(tcp->stream.buf, 0x00, tcp->stream.capacity);
+}
+
 /*
  * All transactions are pre-allocated at the start of the server, but their buffer
  * (read and write) is not, they're lazily allocated with this function, meant
@@ -267,13 +298,7 @@ static void backends_healthcheck(struct ev_ctx *ctx, void *data) {
  */
 static void http_transaction_init(struct http_transaction *http) {
     http->encoding = UNSET;
-    http->tcp_session.status = WAITING_REQUEST;
-    http->tcp_session.stream.size = 0;
-    http->tcp_session.stream.toread = 0;
-    http->tcp_session.stream.capacity = MAX_HTTP_TRANSACTION_SIZE;
-    if (!http->tcp_session.stream.buf)
-        http->tcp_session.stream.buf =
-            llb_calloc(MAX_HTTP_TRANSACTION_SIZE, sizeof(unsigned char));
+    tcp_session_init(&http->tcp_session);
 }
 
 /*
@@ -284,16 +309,8 @@ static void http_transaction_init(struct http_transaction *http) {
  */
 static void http_transaction_close(struct http_transaction *http) {
     http->encoding = UNSET;
-    http->tcp_session.stream.size = 0;
-    http->tcp_session.stream.toread = 0;
-    http->tcp_session.status = WAITING_REQUEST;
-    ev_del_fd(http->ctx, http->tcp_session.pipe[CLIENT].fd);
-    ev_del_fd(http->ctx, http->tcp_session.pipe[BACKEND].fd);
-    close_connection(&http->tcp_session.pipe[CLIENT]);
-    close_connection(&http->tcp_session.pipe[BACKEND]);
+    tcp_session_close(&http->tcp_session);
     server.backends[http->backend_idx].active_connections--;
-    memset(http->tcp_session.stream.buf, 0x00,
-           http->tcp_session.stream.capacity);
 #if THREADSNR > 0
     pthread_mutex_lock(&mutex);
 #endif
@@ -316,7 +333,7 @@ static void http_transaction_close(struct http_transaction *http) {
  *         of TLS communication. Also it store the reading buffer to be used for
  *         incoming byte-streams.
  */
-static inline int http_transaction_read(struct http_transaction *http) {
+static inline int tcp_session_read(struct tcp_session *tcp) {
 
     ssize_t nread = 0;
 
@@ -324,12 +341,10 @@ static inline int http_transaction_read(struct http_transaction *http) {
      * Last status, we have access to the length of the packet and we know for
      * sure that it's not a PINGREQ/PINGRESP/DISCONNECT packet.
      */
-    if (http->tcp_session.status == WAITING_REQUEST)
-        nread = recv_data(&http->tcp_session.pipe[CLIENT],
-                          &http->tcp_session.stream);
-    else if (http->tcp_session.status == WAITING_RESPONSE)
-        nread = recv_data(&http->tcp_session.pipe[BACKEND],
-                          &http->tcp_session.stream);
+    if (tcp->status == WAITING_REQUEST)
+        nread = recv_data(&tcp->pipe[CLIENT], &tcp->stream);
+    else if (tcp->status == WAITING_RESPONSE)
+        nread = recv_data(&tcp->pipe[BACKEND], &tcp->stream);
 
     if (errno != EAGAIN && errno != EWOULDBLOCK && nread < 0)
         return -ERRSOCKETERR;
@@ -347,16 +362,14 @@ static inline int http_transaction_read(struct http_transaction *http) {
  * EAGAIN (socket descriptor must be in non-blocking mode) error is raised,
  * meaning we cannot write anymore for the current cycle.
  */
-static inline int http_transaction_write(struct http_transaction *http) {
+static inline int tcp_session_write(struct tcp_session *tcp) {
 
     ssize_t wrote = 0;
 
-    if (http->tcp_session.status == FORWARDING_REQUEST)
-        wrote = send_data(&http->tcp_session.pipe[BACKEND],
-                          &http->tcp_session.stream);
-    else if (http->tcp_session.status == FORWARDING_RESPONSE)
-        wrote = send_data(&http->tcp_session.pipe[CLIENT],
-                          &http->tcp_session.stream);
+    if (tcp->status == FORWARDING_REQUEST)
+        wrote = send_data(&tcp->pipe[BACKEND], &tcp->stream);
+    else if (tcp->status == FORWARDING_RESPONSE)
+        wrote = send_data(&tcp->pipe[CLIENT], &tcp->stream);
 
     if (errno != EAGAIN && errno != EWOULDBLOCK && wrote < 0)
         goto clientdc;
@@ -377,14 +390,42 @@ clientdc:
  * ===========
  */
 
+static void tcp_write_callback(struct ev_ctx *ctx, void *arg) {
+    struct tcp_session *tcp = arg;
+    int err = tcp_session_write(tcp);
+    switch (err) {
+        case LLB_SUCCESS: // OK
+            /*
+             * Rearm descriptor making it ready to receive input,
+             * read_callback will be the callback to be used; also reset the
+             * read buffer status for the client.
+             */
+            // reset the pointer to the beginning of the buffer
+            tcp->stream.size = 0;
+            if (tcp->status == FORWARDING_REQUEST) {
+                tcp->status = WAITING_RESPONSE;
+            } else if (tcp->status == FORWARDING_RESPONSE) {
+                tcp->status = WAITING_REQUEST;
+            }
+            enqueue_tcp_read(tcp);
+            break;
+        case -ERREAGAIN:
+            enqueue_tcp_write(tcp);
+            break;
+        default:
+            tcp_session_close(tcp);
+            break;
+    }
+}
+
 /*
  * Callback dedicated to client replies, try to send as much data as possible
  * epmtying the client buffer and rearming the socket descriptor for reading
  * after
  */
-static void write_callback(struct ev_ctx *ctx, void *arg) {
+static void http_write_callback(struct ev_ctx *ctx, void *arg) {
     struct http_transaction *http = arg;
-    int err = http_transaction_write(http);
+    int err = tcp_session_write(&http->tcp_session);
     switch (err) {
         case LLB_SUCCESS: // OK
             /*
@@ -396,13 +437,13 @@ static void write_callback(struct ev_ctx *ctx, void *arg) {
                 http->tcp_session.status = WAITING_RESPONSE;
                 // reset the pointer to the beginning of the buffer
                 http->tcp_session.stream.size = 0;
-                enqueue_event_read(http);
+                enqueue_http_read(http);
             } else if (http->tcp_session.status == FORWARDING_RESPONSE) {
                 http_transaction_close(http);
             }
             break;
         case -ERREAGAIN:
-            enqueue_event_write(http);
+            enqueue_http_write(http);
             break;
         default:
             http_transaction_close(http);
@@ -438,34 +479,45 @@ static void accept_callback(struct ev_ctx *ctx, void *data) {
          * Create a connection structure to handle the client context of the
          * communication channel.
          */
+        if (conf->mode == LLB_HTTP_MODE) {
 #if THREADSNR > 0
-        pthread_mutex_lock(&mutex);
+            pthread_mutex_lock(&mutex);
 #endif
-        struct http_transaction *http = memorypool_alloc(server.pool);
+            struct http_transaction *http = memorypool_alloc(server.pool);
 #if THREADSNR > 0
-        pthread_mutex_unlock(&mutex);
+            pthread_mutex_unlock(&mutex);
 #endif
-        http->tcp_session.pipe[CLIENT] = conn;
-        http_transaction_init(http);
-        http->ctx = ctx;
+            http->tcp_session.pipe[CLIENT] = conn;
+            http_transaction_init(http);
+            http->tcp_session.ctx = ctx;
 
-        /* Add it to the epoll loop */
-        ev_register_event(ctx, fd, EV_READ, read_callback, http);
+            /* Add it to the epoll loop */
+            ev_register_event(ctx, fd, EV_READ, http_read_callback, http);
+        } else  {
+#if THREADSNR > 0
+            pthread_mutex_lock(&mutex);
+#endif
+            struct tcp_session *tcp = memorypool_alloc(server.pool);
+#if THREADSNR > 0
+            pthread_mutex_unlock(&mutex);
+#endif
+            tcp->pipe[CLIENT] = conn;
+            tcp_session_init(tcp);
+            tcp->ctx = ctx;
+
+            /* Connect to a backend and set to read events for incoming data */
+            route_tcp_to_backend(ctx, tcp);
+        }
     }
 }
 
-/*
- * Reading packet callback, it's the main function that will be called every
- * time a connected client has some data to be read, notified by the eventloop
- * context.
- */
-static void read_callback(struct ev_ctx *ctx, void *data) {
-    struct http_transaction *http = data;
+static void tcp_read_callback(struct ev_ctx *ctx, void *data) {
+    struct tcp_session *tcp = data;
     /*
      * Received a bunch of data from a client,  we need to read the bytes and
      * encoding the content according to the protocol
      */
-    int rc = http_transaction_read(http);
+    int rc = tcp_session_read(tcp);
     switch (rc) {
         case LLB_SUCCESS:
             /*
@@ -475,7 +527,65 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
              * the response back to the requesting client otherwise
              * (WAITING_RESPONSE state)
              */
-            PROCESS_STREAM(http);
+            switch (tcp->status) {
+                case WAITING_REQUEST:
+                    tcp->status = FORWARDING_REQUEST;
+                    break;
+                case WAITING_RESPONSE:
+                    tcp->status = FORWARDING_RESPONSE;
+                    break;
+            }
+            enqueue_tcp_write(tcp);
+            break;
+        case -ERRCLIENTDC:
+        case -ERRSOCKETERR:
+            /*
+             * We got an unexpected error or a disconnection from the
+             * client side, close the connection and free the resources
+             */
+            log_error("Closing connection with %s -> %s: %s",
+                      tcp->pipe[CLIENT].ip, tcp->pipe[BACKEND].ip, llberr(rc));
+            tcp_session_close(tcp);
+            break;
+        case -ERREAGAIN:
+            // TODO, check for content-length in case of non-chunked mode
+            /*
+             * We read all we could from the last read call, it's not certain
+             * that all data is read, especially in chunked mode, so we proceed
+             * processing the payload only when we're sure we finished reading
+             * which happens in two cases:
+             * - chunked response: the last chunk ends with a 0 length mini-header
+             *   followed by 2 CRLF like "0\r\n\r\n"
+             * - non-chunked response: a content-length header should be present
+             *   stating the expected length of the transmission
+             */
+             enqueue_tcp_read(tcp);
+            break;
+    }
+}
+
+/*
+ * Reading packet callback, it's the main function that will be called every
+ * time a connected client has some data to be read, notified by the eventloop
+ * context.
+ */
+static void http_read_callback(struct ev_ctx *ctx, void *data) {
+    struct http_transaction *http = data;
+    /*
+     * Received a bunch of data from a client,  we need to read the bytes and
+     * encoding the content according to the protocol
+     */
+    int rc = tcp_session_read(&http->tcp_session);
+    switch (rc) {
+        case LLB_SUCCESS:
+            /*
+             * All is ok, process the incoming request/response based on the
+             * state of the transaction, in fact we need to forward the request
+             * to a backend if in WAITING_RESPONSE state or we need to forward
+             * the response back to the requesting client otherwise
+             * (WAITING_RESPONSE state)
+             */
+            PROCESS_HTTP_STREAM(http);
             break;
         case -ERRCLIENTDC:
         case -ERRSOCKETERR:
@@ -503,29 +613,20 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
             if (http->encoding == UNSET)
                 http_parse_header(http);
             if (http->encoding != CHUNKED) {
-                PROCESS_STREAM(http);
+                PROCESS_HTTP_STREAM(http);
             } else {
                 if (CHUNKED_COMPLETE(http))
-                    PROCESS_STREAM(http)
+                    PROCESS_HTTP_STREAM(http)
                 else
-                    enqueue_event_read(http);
+                    enqueue_http_read(http);
             }
             break;
     }
 }
 
-/*
- * This function is called only if the client has sent a full stream of bytes
- * consisting of a complete HTTP header and body.
- * According to the selected load-balancing algorithm specified in the
- * configuration, it chooses a backend to connect to and redirects the request
- * toward it by registering the newly connected descriptor to the event-loop
- * with the write callback.
- * Current algorithms supported are round-robin and hash-based routing.
- */
-static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
-    volatile atomic_int next = ATOMIC_VAR_INIT(0);
+static int select_backend(struct backend **backend_ptr, const char *buf) {
     struct backend *backend = NULL;
+    volatile atomic_int next = ATOMIC_VAR_INIT(0);
     char *ptr = NULL;
     switch (conf->load_balancing) {
         case ROUND_ROBIN:
@@ -546,7 +647,7 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
              * backend. Try hashing different parts of the request in case of dead
              * endpoints selected
              */
-            ptr = (char *) http->tcp_session.stream.buf;
+            ptr = (char *) buf;
             while (!backend || backend->alive == false) {
                 // FIXME dumb heuristic
                 next = djb_hash(ptr + next) % conf->backends_nr;
@@ -630,7 +731,53 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
             log_error("Unknown balancing algorithm");
             exit(EXIT_FAILURE);
     }
-    //log_debug("Forwarding to %s:%i (%i)", backend->host, backend->port, next);
+    *backend_ptr = backend;
+    return next;
+}
+
+static void route_tcp_to_backend(struct ev_ctx *ctx, struct tcp_session *tcp) {
+    struct backend *backend = NULL;
+    (void) select_backend(&backend, (const char *) tcp->stream.buf);
+    /*
+     * Create a connection structure to handle the client context of the
+     * backend new communication channel.
+     */
+    connection_init(&tcp->pipe[BACKEND], conf->tls ? server.ssl_ctx : NULL);
+#if THREADSNR > 0
+        pthread_mutex_lock(&mutex);
+#endif
+    int fd = open_connection(&tcp->pipe[BACKEND], backend->host, backend->port);
+#if THREADSNR > 0
+        pthread_mutex_unlock(&mutex);
+#endif
+    if (fd == 0)
+        return;
+    if (fd < 0) {
+        close_connection(&tcp->pipe[BACKEND]);
+        return;
+    }
+
+    backend->active_connections++;
+    tcp->status = WAITING_REQUEST;
+
+    /* Add it to the epoll loop */
+    ev_register_event(ctx, fd, EV_WRITE, tcp_read_callback, tcp);
+}
+
+/*
+ * This function is called only if the client has sent a full stream of bytes
+ * consisting of a complete HTTP header and body.
+ * According to the selected load-balancing algorithm specified in the
+ * configuration, it chooses a backend to connect to and redirects the request
+ * toward it by registering the newly connected descriptor to the event-loop
+ * with the write callback.
+ * Current algorithms supported are round-robin and hash-based routing.
+ */
+static void process_http_request(struct ev_ctx *ctx,
+                                 struct http_transaction *http) {
+    struct backend *backend = NULL;
+    volatile int next =
+        select_backend(&backend, (const char *) http->tcp_session.stream.buf);
     /*
      * Create a connection structure to handle the client context of the
      * backend new communication channel.
@@ -657,16 +804,17 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
     http->tcp_session.status = FORWARDING_REQUEST;
 
     /* Add it to the epoll loop */
-    ev_register_event(ctx, fd, EV_WRITE, write_callback, http);
+    ev_register_event(ctx, fd, EV_WRITE, http_write_callback, http);
 }
 
 /*
  * The response received back from a backend, meant to be returned to the
  * requesting client, so just schedule a write back to the client
  */
-static void process_response(struct ev_ctx *ctx, struct http_transaction *http) {
+static void process_http_response(struct ev_ctx *ctx,
+                                  struct http_transaction *http) {
     http->tcp_session.status = FORWARDING_RESPONSE;
-    enqueue_event_write(http);
+    enqueue_http_write(http);
 }
 
 /*
@@ -713,23 +861,41 @@ static void eventloop_start(void *args) {
  */
 
 /* Fire a read callback to react accordingly to descriptor ready to be read */
-static void enqueue_event_read(const struct http_transaction *http) {
+static void enqueue_http_read(const struct http_transaction *http) {
     if (http->tcp_session.status == WAITING_REQUEST)
-        ev_fire_event(http->ctx, http->tcp_session.pipe[CLIENT].fd,
-                      EV_READ, read_callback, (void *) http);
+        ev_fire_event(http->tcp_session.ctx, http->tcp_session.pipe[CLIENT].fd,
+                      EV_READ, http_read_callback, (void *) http);
     else if (http->tcp_session.status == WAITING_RESPONSE)
-        ev_fire_event(http->ctx, http->tcp_session.pipe[BACKEND].fd,
-                      EV_READ, read_callback, (void *) http);
+        ev_fire_event(http->tcp_session.ctx, http->tcp_session.pipe[BACKEND].fd,
+                      EV_READ, http_read_callback, (void *) http);
 }
 
 /* Fire a write callback to reply after a client request */
-static void enqueue_event_write(const struct http_transaction *http) {
+static void enqueue_http_write(const struct http_transaction *http) {
     if (http->tcp_session.status == FORWARDING_REQUEST)
-        ev_fire_event(http->ctx, http->tcp_session.pipe[BACKEND].fd,
-                      EV_WRITE, write_callback, (void *) http);
+        ev_fire_event(http->tcp_session.ctx, http->tcp_session.pipe[BACKEND].fd,
+                      EV_WRITE, http_write_callback, (void *) http);
     else if (http->tcp_session.status == FORWARDING_RESPONSE)
-        ev_fire_event(http->ctx, http->tcp_session.pipe[CLIENT].fd,
-                      EV_WRITE, write_callback, (void *) http);
+        ev_fire_event(http->tcp_session.ctx, http->tcp_session.pipe[CLIENT].fd,
+                      EV_WRITE, http_write_callback, (void *) http);
+}
+
+static void enqueue_tcp_read(const struct tcp_session *tcp) {
+    if (tcp->status == WAITING_REQUEST)
+        ev_fire_event(tcp->ctx, tcp->pipe[CLIENT].fd,
+                      EV_READ, tcp_read_callback, (void *) tcp);
+    else if (tcp->status == WAITING_RESPONSE)
+        ev_fire_event(tcp->ctx, tcp->pipe[BACKEND].fd,
+                      EV_READ, tcp_read_callback, (void *) tcp);
+}
+
+static void enqueue_tcp_write(const struct tcp_session *tcp) {
+    if (tcp->status == FORWARDING_REQUEST)
+        ev_fire_event(tcp->ctx, tcp->pipe[BACKEND].fd,
+                      EV_WRITE, tcp_write_callback, (void *) tcp);
+    else if (tcp->status == FORWARDING_RESPONSE)
+        ev_fire_event(tcp->ctx, tcp->pipe[CLIENT].fd,
+                      EV_WRITE, tcp_write_callback, (void *) tcp);
 }
 
 static inline int gcd(int a, int b) {
@@ -768,8 +934,12 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
             weights[i] = server.backends[i].weight;
         server.gcd = ATOMIC_VAR_INIT(GCD(weights, conf->backends_nr));
     }
-    server.pool =
-        memorypool_new(MAX_HTTP_TRANSACTIONS, sizeof(struct http_transaction));
+    if (conf->mode == LLB_HTTP_MODE)
+        server.pool = memorypool_new(MAX_HTTP_TRANSACTIONS,
+                                     sizeof(struct http_transaction));
+    else
+        server.pool = memorypool_new(MAX_HTTP_TRANSACTIONS,
+                                     sizeof(struct tcp_session));
 
     /* Setup SSL in case of flag true */
     if (conf->tls == true) {

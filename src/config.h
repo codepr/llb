@@ -63,7 +63,8 @@
 
 // Default parameters
 
-#define VERSION                     "0.0.10"
+#define VERSION                     "0.1.1"
+#define DEFAULT_MODE                LLB_HTTP_MODE
 #define DEFAULT_LOG_LEVEL           DEBUG
 #define DEFAULT_CONF_PATH           "/etc/llb/llb.conf"
 #define DEFAULT_HOSTNAME            "127.0.0.1"
@@ -128,6 +129,8 @@ struct config {
     char keyfile[0xFFF];
     /* Load-balancing algorithms */
     int load_balancing;
+    /* Load balncing execution mode */
+    int mode;
 };
 
 extern struct config *conf;

@@ -35,6 +35,10 @@
 
 #define RANDOM(A,B) A + rand()/(RAND_MAX/(B - A))
 
+/* Load-balancing mode */
+#define LLB_TCP_MODE  0
+#define LLB_HTTP_MODE 1
+
 #define LLB_SUCCESS  0
 #define LLB_FAILURE -1
 
