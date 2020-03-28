@@ -52,6 +52,7 @@ static void sigint_handler(int signum) {
 static const char *flag_description[] = {
     "Print this help",
     "Set a configuration file to load and use",
+    "Specify a mode of usage, can be either http or tcp",
     "Specify a list of backends in the form of host:port:weight, weight is optional",
     "Specify the load-balancing type, between [round-robin, random, hash, leastconn, weighted-round-robin]",
     "Enable all logs, setting log level to DEBUG",
@@ -60,9 +61,10 @@ static const char *flag_description[] = {
 
 void print_help(char *me) {
     printf("\nllb v%s (L)ittle (L)oad (B)alancer\n\n", VERSION);
-    printf("Usage: %s [-c conf] -b [backends..] -l [load-balancing] [-v|-d|-h]\n\n", me);
-    const char flags[6] = "hcblvd";
-    for (int i = 0; i < 6; ++i)
+    printf("Usage: %s [-c conf] [-b backends..] [-l load-balancing]"
+           " [-m mode] [-v|-d|-h]\n\n", me);
+    const char flags[7] = "hcmblvd";
+    for (int i = 0; i < 7; ++i)
         printf(" -%c: %s\n", flags[i], flag_description[i]);
     printf("\n");
 }
@@ -76,14 +78,14 @@ int main (int argc, char **argv) {
     srand((unsigned) time(NULL));
 
     char *confpath = DEFAULT_CONF_PATH;
-    char *backends = NULL, *load_balancing = NULL;
+    char *backends = NULL, *load_balancing = NULL, *mode = NULL;
     int debug = 0, daemon = 0;
     int opt;
 
     // Set default configuration
     config_set_default();
 
-    while ((opt = getopt(argc, argv, "c:b:l:vhd:")) != -1) {
+    while ((opt = getopt(argc, argv, "c:b:l:m:vhd:")) != -1) {
         switch (opt) {
             case 'c':
                 confpath = optarg;
@@ -93,6 +95,9 @@ int main (int argc, char **argv) {
                 break;
             case 'l':
                 load_balancing = optarg;
+                break;
+            case 'm':
+                mode = optarg;
                 break;
             case 'v':
                 debug = 1;
@@ -111,6 +116,8 @@ int main (int argc, char **argv) {
 
     // Override default DEBUG mode
     conf->loglevel = debug == 1 ? DEBUG : WARNING;
+
+    conf->mode = STREQ(mode, "http", 4) ? LLB_HTTP_MODE : LLB_TCP_MODE;
 
     // Try to load a configuration, if found
     if (!config_load(confpath)) {
