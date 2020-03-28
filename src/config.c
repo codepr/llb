@@ -399,6 +399,7 @@ void config_print(void) {
             llevel = lmap[i].lname;
     }
     log_info("llb v%s is starting", VERSION);
+    log_info("mode: %s", conf->mode == LLB_HTTP_MODE ? "http" : "tcp");
     log_info("Network settings:");
     log_info("\tTcp backlog: %d", config.tcp_backlog);
     if (config.tls == true) config_print_tls_versions();
