@@ -350,7 +350,10 @@ static inline int tcp_session_read(struct tcp_session *tcp) {
         return -ERRSOCKETERR;
         //return nread == -1 ? -ERRSOCKETERR : -ERRCLIENTDC;
 
-    if (errno == EAGAIN || errno == EWOULDBLOCK)
+    if (conf->mode == LLB_TCP_MODE && nread == 0)
+        return -ERRCLIENTDC;
+
+    if (conf->mode == LLB_HTTP_MODE && (errno == EAGAIN || errno == EWOULDBLOCK))
         return -ERREAGAIN;
 
     return LLB_SUCCESS;
@@ -559,7 +562,7 @@ static void tcp_read_callback(struct ev_ctx *ctx, void *data) {
              * - non-chunked response: a content-length header should be present
              *   stating the expected length of the transmission
              */
-             enqueue_tcp_read(tcp);
+            enqueue_tcp_read(tcp);
             break;
     }
 }
@@ -744,11 +747,11 @@ static void route_tcp_to_backend(struct ev_ctx *ctx, struct tcp_session *tcp) {
      */
     connection_init(&tcp->pipe[BACKEND], conf->tls ? server.ssl_ctx : NULL);
 #if THREADSNR > 0
-        pthread_mutex_lock(&mutex);
+    pthread_mutex_lock(&mutex);
 #endif
     int fd = open_connection(&tcp->pipe[BACKEND], backend->host, backend->port);
 #if THREADSNR > 0
-        pthread_mutex_unlock(&mutex);
+    pthread_mutex_unlock(&mutex);
 #endif
     if (fd == 0)
         return;
@@ -761,7 +764,8 @@ static void route_tcp_to_backend(struct ev_ctx *ctx, struct tcp_session *tcp) {
     tcp->status = WAITING_REQUEST;
 
     /* Add it to the epoll loop */
-    ev_register_event(ctx, fd, EV_WRITE, tcp_read_callback, tcp);
+    ev_register_event(ctx, tcp->pipe[CLIENT].fd, EV_READ, tcp_read_callback, tcp);
+    ev_register_event(ctx, fd, EV_READ, tcp_read_callback, tcp);
 }
 
 /*
