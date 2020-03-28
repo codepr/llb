@@ -108,18 +108,26 @@ enum http_status {
 enum content_encoding { UNSET, GENERIC, CHUNKED };
 
 /*
+ * Tcp session abstraction, carries the connections (descriptors of the
+ * connecting client and the backend selected for the communication)
+ */
+struct tcp_session {
+    int status; /* Current status of the tcp session */
+    struct stream stream;
+    struct connection pipe[2];
+};
+
+/*
  * Wrapper structure around an HTTP transaction.
  * As of now, no allocations will be fired, just a big pool of memory at the
  * start of the application will serve us a client pool, read and write buffers
  * are initialized lazily.
  */
 struct http_transaction {
-    int status; /* Current status of the HTTP transaction */
+    struct tcp_session tcp_session;
     int encoding;
     int backend_idx;
     struct ev_ctx *ctx; /* An event context reference used to fire write events */
-    struct stream stream;
-    struct connection pipe[2];
 };
 
 #define CLIENT  0

@@ -158,19 +158,19 @@ static inline void http_parse_content_length(struct http_transaction *);
 static inline int http_header_length(const struct http_transaction *);
 
 #define CHUNKED_COMPLETE(http) \
-    strcmp((char *) (http)->stream.buf + (http)->stream.size - 5, "0\r\n\r\n") == 0
+    strcmp((char *) (http)->tcp_session.stream.buf + (http)->tcp_session.stream.size - 5, "0\r\n\r\n") == 0
 
-#define PROCESS_STREAM(http) do {                    \
-    if ((http)->status == WAITING_REQUEST) {         \
-        process_request((http)->ctx, (http));        \
-    } else if ((http)->status == WAITING_RESPONSE) { \
-        process_response((http)->ctx, (http));       \
-    }                                                \
+#define PROCESS_STREAM(http) do {                                \
+    if ((http)->tcp_session.status == WAITING_REQUEST) {         \
+        process_request((http)->ctx, (http));                    \
+    } else if ((http)->tcp_session.status == WAITING_RESPONSE) { \
+        process_response((http)->ctx, (http));                   \
+    }                                                            \
 } while (0);
 
 /* Parse header length by scanning all chars till the double CRLF */
 static inline int http_header_length(const struct http_transaction *http) {
-    char *ptr = (char *) http->stream.buf;
+    char *ptr = (char *) http->tcp_session.stream.buf;
     int count = 0;
     while (*ptr) {
         if (STREQ(ptr, HTTP_HEADER_CRLF, 4))
@@ -185,20 +185,21 @@ static inline void http_parse_content_length(struct http_transaction *http) {
     // XXX hack
     int header_length = http_header_length(http);
     const char *content_length =
-        strstr((const char *) http->stream.buf, "Content-Length");
+        strstr((const char *) http->tcp_session.stream.buf, "Content-Length");
     char line[64];
     snprintf(line, 64, "%s", content_length);
     char *token = strtok(line, ":");
     if (token)
-        http->stream.toread = atoi(token) + (http->stream.size - header_length);
+        http->tcp_session.stream.toread =
+            atoi(token) + (http->tcp_session.stream.size - header_length);
 }
 
 // XXX Eyesore
 static inline void http_parse_header(struct http_transaction *http) {
     const char *encoding =
-        strstr((const char *) http->stream.buf, "Transfer-Encoding");
+        strstr((const char *) http->tcp_session.stream.buf, "Transfer-Encoding");
     if (encoding) {
-        if (strstr((const char *) http->stream.buf, "chunked"))
+        if (strstr((const char *) http->tcp_session.stream.buf, "chunked"))
             http->encoding = CHUNKED;
         else
             http->encoding = GENERIC;
@@ -265,13 +266,13 @@ static void backends_healthcheck(struct ev_ctx *ctx, void *data) {
  * to be called on the accept callback
  */
 static void http_transaction_init(struct http_transaction *http) {
-    http->status = WAITING_REQUEST;
     http->encoding = UNSET;
-    http->stream.size = 0;
-    http->stream.toread = 0;
-    http->stream.capacity = MAX_HTTP_TRANSACTION_SIZE;
-    if (!http->stream.buf)
-        http->stream.buf =
+    http->tcp_session.status = WAITING_REQUEST;
+    http->tcp_session.stream.size = 0;
+    http->tcp_session.stream.toread = 0;
+    http->tcp_session.stream.capacity = MAX_HTTP_TRANSACTION_SIZE;
+    if (!http->tcp_session.stream.buf)
+        http->tcp_session.stream.buf =
             llb_calloc(MAX_HTTP_TRANSACTION_SIZE, sizeof(unsigned char));
 }
 
@@ -282,16 +283,17 @@ static void http_transaction_init(struct http_transaction *http) {
  * not) and we allow the http memory pool to reclaim it
  */
 static void http_transaction_close(struct http_transaction *http) {
-    http->stream.size = 0;
-    http->stream.toread = 0;
     http->encoding = UNSET;
-    http->status = WAITING_REQUEST;
-    ev_del_fd(http->ctx, http->pipe[CLIENT].fd);
-    ev_del_fd(http->ctx, http->pipe[BACKEND].fd);
-    close_connection(&http->pipe[CLIENT]);
-    close_connection(&http->pipe[BACKEND]);
+    http->tcp_session.stream.size = 0;
+    http->tcp_session.stream.toread = 0;
+    http->tcp_session.status = WAITING_REQUEST;
+    ev_del_fd(http->ctx, http->tcp_session.pipe[CLIENT].fd);
+    ev_del_fd(http->ctx, http->tcp_session.pipe[BACKEND].fd);
+    close_connection(&http->tcp_session.pipe[CLIENT]);
+    close_connection(&http->tcp_session.pipe[BACKEND]);
     server.backends[http->backend_idx].active_connections--;
-    memset(http->stream.buf, 0x00, http->stream.capacity);
+    memset(http->tcp_session.stream.buf, 0x00,
+           http->tcp_session.stream.capacity);
 #if THREADSNR > 0
     pthread_mutex_lock(&mutex);
 #endif
@@ -322,10 +324,12 @@ static inline int http_transaction_read(struct http_transaction *http) {
      * Last status, we have access to the length of the packet and we know for
      * sure that it's not a PINGREQ/PINGRESP/DISCONNECT packet.
      */
-    if (http->status == WAITING_REQUEST)
-        nread = recv_data(&http->pipe[CLIENT], &http->stream);
-    else if (http->status == WAITING_RESPONSE)
-        nread = recv_data(&http->pipe[BACKEND], &http->stream);
+    if (http->tcp_session.status == WAITING_REQUEST)
+        nread = recv_data(&http->tcp_session.pipe[CLIENT],
+                          &http->tcp_session.stream);
+    else if (http->tcp_session.status == WAITING_RESPONSE)
+        nread = recv_data(&http->tcp_session.pipe[BACKEND],
+                          &http->tcp_session.stream);
 
     if (errno != EAGAIN && errno != EWOULDBLOCK && nread < 0)
         return -ERRSOCKETERR;
@@ -347,10 +351,12 @@ static inline int http_transaction_write(struct http_transaction *http) {
 
     ssize_t wrote = 0;
 
-    if (http->status == FORWARDING_REQUEST)
-        wrote = send_data(&http->pipe[BACKEND], &http->stream);
-    else if (http->status == FORWARDING_RESPONSE)
-        wrote = send_data(&http->pipe[CLIENT], &http->stream);
+    if (http->tcp_session.status == FORWARDING_REQUEST)
+        wrote = send_data(&http->tcp_session.pipe[BACKEND],
+                          &http->tcp_session.stream);
+    else if (http->tcp_session.status == FORWARDING_RESPONSE)
+        wrote = send_data(&http->tcp_session.pipe[CLIENT],
+                          &http->tcp_session.stream);
 
     if (errno != EAGAIN && errno != EWOULDBLOCK && wrote < 0)
         goto clientdc;
@@ -386,12 +392,12 @@ static void write_callback(struct ev_ctx *ctx, void *arg) {
              * read_callback will be the callback to be used; also reset the
              * read buffer status for the client.
              */
-            if (http->status == FORWARDING_REQUEST) {
-                http->status = WAITING_RESPONSE;
+            if (http->tcp_session.status == FORWARDING_REQUEST) {
+                http->tcp_session.status = WAITING_RESPONSE;
                 // reset the pointer to the beginning of the buffer
-                http->stream.size = 0;
+                http->tcp_session.stream.size = 0;
                 enqueue_event_read(http);
-            } else if (http->status == FORWARDING_RESPONSE) {
+            } else if (http->tcp_session.status == FORWARDING_RESPONSE) {
                 http_transaction_close(http);
             }
             break;
@@ -439,7 +445,7 @@ static void accept_callback(struct ev_ctx *ctx, void *data) {
 #if THREADSNR > 0
         pthread_mutex_unlock(&mutex);
 #endif
-        http->pipe[CLIENT] = conn;
+        http->tcp_session.pipe[CLIENT] = conn;
         http_transaction_init(http);
         http->ctx = ctx;
 
@@ -478,7 +484,8 @@ static void read_callback(struct ev_ctx *ctx, void *data) {
              * client side, close the connection and free the resources
              */
             log_error("Closing connection with %s -> %s: %s",
-                      http->pipe[CLIENT].ip, http->pipe[BACKEND].ip, llberr(rc));
+                      http->tcp_session.pipe[CLIENT].ip,
+                      http->tcp_session.pipe[BACKEND].ip, llberr(rc));
             http_transaction_close(http);
             break;
         case -ERREAGAIN:
@@ -539,7 +546,7 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
              * backend. Try hashing different parts of the request in case of dead
              * endpoints selected
              */
-            ptr = (char *) http->stream.buf;
+            ptr = (char *) http->tcp_session.stream.buf;
             while (!backend || backend->alive == false) {
                 // FIXME dumb heuristic
                 next = djb_hash(ptr + next) % conf->backends_nr;
@@ -628,24 +635,26 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
      * Create a connection structure to handle the client context of the
      * backend new communication channel.
      */
-    connection_init(&http->pipe[BACKEND], conf->tls ? server.ssl_ctx : NULL);
+    connection_init(&http->tcp_session.pipe[BACKEND],
+                    conf->tls ? server.ssl_ctx : NULL);
 #if THREADSNR > 0
         pthread_mutex_lock(&mutex);
 #endif
-    int fd = open_connection(&http->pipe[BACKEND], backend->host, backend->port);
+    int fd = open_connection(&http->tcp_session.pipe[BACKEND],
+                             backend->host, backend->port);
 #if THREADSNR > 0
         pthread_mutex_unlock(&mutex);
 #endif
     if (fd == 0)
         return;
     if (fd < 0) {
-        close_connection(&http->pipe[BACKEND]);
+        close_connection(&http->tcp_session.pipe[BACKEND]);
         return;
     }
 
     backend->active_connections++;
     http->backend_idx = next;
-    http->status = FORWARDING_REQUEST;
+    http->tcp_session.status = FORWARDING_REQUEST;
 
     /* Add it to the epoll loop */
     ev_register_event(ctx, fd, EV_WRITE, write_callback, http);
@@ -656,7 +665,7 @@ static void process_request(struct ev_ctx *ctx, struct http_transaction *http) {
  * requesting client, so just schedule a write back to the client
  */
 static void process_response(struct ev_ctx *ctx, struct http_transaction *http) {
-    http->status = FORWARDING_RESPONSE;
+    http->tcp_session.status = FORWARDING_RESPONSE;
     enqueue_event_write(http);
 }
 
@@ -705,21 +714,21 @@ static void eventloop_start(void *args) {
 
 /* Fire a read callback to react accordingly to descriptor ready to be read */
 static void enqueue_event_read(const struct http_transaction *http) {
-    if (http->status == WAITING_REQUEST)
-        ev_fire_event(http->ctx, http->pipe[CLIENT].fd,
+    if (http->tcp_session.status == WAITING_REQUEST)
+        ev_fire_event(http->ctx, http->tcp_session.pipe[CLIENT].fd,
                       EV_READ, read_callback, (void *) http);
-    else if (http->status == WAITING_RESPONSE)
-        ev_fire_event(http->ctx, http->pipe[BACKEND].fd,
+    else if (http->tcp_session.status == WAITING_RESPONSE)
+        ev_fire_event(http->ctx, http->tcp_session.pipe[BACKEND].fd,
                       EV_READ, read_callback, (void *) http);
 }
 
 /* Fire a write callback to reply after a client request */
 static void enqueue_event_write(const struct http_transaction *http) {
-    if (http->status == FORWARDING_REQUEST)
-        ev_fire_event(http->ctx, http->pipe[BACKEND].fd,
+    if (http->tcp_session.status == FORWARDING_REQUEST)
+        ev_fire_event(http->ctx, http->tcp_session.pipe[BACKEND].fd,
                       EV_WRITE, write_callback, (void *) http);
-    else if (http->status == FORWARDING_RESPONSE)
-        ev_fire_event(http->ctx, http->pipe[CLIENT].fd,
+    else if (http->tcp_session.status == FORWARDING_RESPONSE)
+        ev_fire_event(http->ctx, http->tcp_session.pipe[CLIENT].fd,
                       EV_WRITE, write_callback, (void *) http);
 }
 
