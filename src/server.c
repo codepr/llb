@@ -121,22 +121,28 @@ static void http_transaction_close(struct http_transaction *);
 // CALLBACKS for the eventloop
 static void accept_callback(struct ev_ctx *, void *);
 
-static void http_read_callback(struct ev_ctx *, void *);
-
 static void tcp_read_callback(struct ev_ctx *, void *);
-
-static void http_write_callback(struct ev_ctx *, void *);
 
 static void tcp_write_callback(struct ev_ctx *, void *);
 
-static void enqueue_http_read(const struct http_transaction *);
+static void http_read_callback(struct ev_ctx *, void *);
 
-static void enqueue_http_write(const struct http_transaction *);
+static void http_write_callback(struct ev_ctx *, void *);
 
 static void enqueue_tcp_read(const struct tcp_session *);
 
 static void enqueue_tcp_write(const struct tcp_session *);
 
+static void enqueue_http_read(const struct http_transaction *);
+
+static void enqueue_http_write(const struct http_transaction *);
+
+/*
+ * This function will be called in LLB_TCP_MODE after a new connection has been
+ * accepted, just before start reading the data stream, select the backend
+ * based on the balancing algorithm and connect to the resulting backend,
+ * adding the new connection to the event loop
+ */
 static void route_tcp_to_backend(struct ev_ctx *, struct tcp_session *);
 
 /*
@@ -167,8 +173,8 @@ static inline void http_parse_content_length(struct http_transaction *);
 
 static inline int http_header_length(const struct http_transaction *);
 
-#define CHUNKED_COMPLETE(http) \
-    strcmp((char *) (http)->tcp_session.stream.buf + (http)->tcp_session.stream.size - 5, "0\r\n\r\n") == 0
+#define CHUNKED_COMPLETE(tcp) \
+    strcmp((char *) (tcp)->stream.buf + (tcp)->stream.size - 5, "0\r\n\r\n") == 0
 
 #define PROCESS_HTTP_STREAM(http) do {                           \
     if ((http)->tcp_session.status == WAITING_REQUEST) {         \
@@ -618,7 +624,7 @@ static void http_read_callback(struct ev_ctx *ctx, void *data) {
             if (http->encoding != CHUNKED) {
                 PROCESS_HTTP_STREAM(http);
             } else {
-                if (CHUNKED_COMPLETE(http))
+                if (CHUNKED_COMPLETE(&http->tcp_session))
                     PROCESS_HTTP_STREAM(http)
                 else
                     enqueue_http_read(http);
