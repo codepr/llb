@@ -19,14 +19,13 @@ Features:
 - TLS encryption (to be refined)
 - Daemon mode
 - Multithread event-loop
+- HTTP and TCP load-balancing
 - Round-robin, weighted round-robin, hash-balancing, random-balancing, leastconn
 - Pretty small (~2000 sloc) and little dependencies (openssl)
 
 Next:
 
 - Improvements on all previous points
-- More load-balancing methods, e.g. leastconn for TCP
-- TCP long lived connections load-balancing
 
 ## Build
 
@@ -54,6 +53,9 @@ located to `/etc/llb/llb.conf`:
 
 ```sh
 # llb configuration file, uncomment and edit desired configuration
+
+# accepts http | tcp
+mode http
 
 # Load-balancing settings
 
