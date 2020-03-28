@@ -113,6 +113,7 @@ enum content_encoding { UNSET, GENERIC, CHUNKED };
  */
 struct tcp_session {
     int status; /* Current status of the tcp session */
+    int backend_idx;
     struct stream stream;
     struct connection pipe[2];
     struct ev_ctx *ctx; /* An event context reference used to fire write events */
@@ -127,7 +128,6 @@ struct tcp_session {
 struct http_transaction {
     struct tcp_session tcp_session;
     int encoding;
-    int backend_idx;
 };
 
 #define CLIENT  0

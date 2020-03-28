@@ -114,6 +114,10 @@ struct server server;
  * for each different thread.
  */
 
+static void tcp_session_init(struct tcp_session *);
+
+static void tcp_session_close(struct tcp_session *);
+
 static void http_transaction_init(struct http_transaction *);
 
 static void http_transaction_close(struct http_transaction *);
@@ -276,6 +280,12 @@ static void backends_healthcheck(struct ev_ctx *ctx, void *data) {
  * ======================================================
  */
 
+/*
+ * All tcp sessions are pre-allocated at the start of the server, their content
+ * have to be initialized at each connection only if not already initialized by
+ * previous used connections, e.g. after a re-use of an already employed
+ * connection
+ */
 static void tcp_session_init(struct tcp_session *tcp) {
     tcp->status = WAITING_REQUEST;
     tcp->stream.size = 0;
@@ -286,6 +296,11 @@ static void tcp_session_init(struct tcp_session *tcp) {
             llb_calloc(MAX_HTTP_TRANSACTION_SIZE, sizeof(unsigned char));
 }
 
+/*
+ * To promote tcp session re-usage and avoid to having re-allocate all buffers
+ * each time a new client connects, we just "deactivate" the session and return
+ * it to the server memory pool
+ */
 static void tcp_session_close(struct tcp_session *tcp) {
     tcp->stream.size = 0;
     tcp->stream.toread = 0;
@@ -295,6 +310,16 @@ static void tcp_session_close(struct tcp_session *tcp) {
     close_connection(&tcp->pipe[CLIENT]);
     close_connection(&tcp->pipe[BACKEND]);
     memset(tcp->stream.buf, 0x00, tcp->stream.capacity);
+    server.backends[tcp->backend_idx].active_connections--;
+    if (conf->mode == LLB_TCP_MODE) {
+#if THREADSNR > 0
+        pthread_mutex_lock(&mutex);
+#endif
+        memorypool_free(server.pool, tcp);
+#if THREADSNR > 0
+        pthread_mutex_unlock(&mutex);
+#endif
+    }
 }
 
 /*
@@ -316,7 +341,6 @@ static void http_transaction_init(struct http_transaction *http) {
 static void http_transaction_close(struct http_transaction *http) {
     http->encoding = UNSET;
     tcp_session_close(&http->tcp_session);
-    server.backends[http->backend_idx].active_connections--;
 #if THREADSNR > 0
     pthread_mutex_lock(&mutex);
 #endif
@@ -633,6 +657,17 @@ static void http_read_callback(struct ev_ctx *ctx, void *data) {
     }
 }
 
+/*
+ * Select a backend to route the traffic towards, the selection occurs based on
+ * the balancing algorithm available, currently llb supports the following
+ * balancing algorithm:
+ *
+ * - Round robin
+ * - Random
+ * - Hash
+ * - Leastconn
+ * - Weighted round robin
+ */
 static int select_backend(struct backend **backend_ptr, const char *buf) {
     struct backend *backend = NULL;
     volatile atomic_int next = ATOMIC_VAR_INIT(0);
@@ -746,7 +781,7 @@ static int select_backend(struct backend **backend_ptr, const char *buf) {
 
 static void route_tcp_to_backend(struct ev_ctx *ctx, struct tcp_session *tcp) {
     struct backend *backend = NULL;
-    (void) select_backend(&backend, (const char *) tcp->stream.buf);
+    volatile int next = select_backend(&backend, (const char *) tcp->stream.buf);
     /*
      * Create a connection structure to handle the client context of the
      * backend new communication channel.
@@ -768,6 +803,7 @@ static void route_tcp_to_backend(struct ev_ctx *ctx, struct tcp_session *tcp) {
 
     backend->active_connections++;
     tcp->status = WAITING_REQUEST;
+    tcp->backend_idx = next;
 
     /* Add it to the epoll loop */
     ev_register_event(ctx, tcp->pipe[CLIENT].fd, EV_READ, tcp_read_callback, tcp);
@@ -810,7 +846,7 @@ static void process_http_request(struct ev_ctx *ctx,
     }
 
     backend->active_connections++;
-    http->backend_idx = next;
+    http->tcp_session.backend_idx = next;
     http->tcp_session.status = FORWARDING_REQUEST;
 
     /* Add it to the epoll loop */
@@ -865,12 +901,11 @@ static void eventloop_start(void *args) {
 }
 
 /*
- * ===================
- *  Main APIs exposed
- * ===================
+ * LLB_HTTP_MODE helper
+ *
+ * Fire a read callback to react accordingly to the descriptor ready to be read,
+ * calling the HTTP read callback
  */
-
-/* Fire a read callback to react accordingly to descriptor ready to be read */
 static void enqueue_http_read(const struct http_transaction *http) {
     if (http->tcp_session.status == WAITING_REQUEST)
         ev_fire_event(http->tcp_session.ctx, http->tcp_session.pipe[CLIENT].fd,
@@ -880,7 +915,12 @@ static void enqueue_http_read(const struct http_transaction *http) {
                       EV_READ, http_read_callback, (void *) http);
 }
 
-/* Fire a write callback to reply after a client request */
+/*
+ * LLB_HTTP_MODE helper
+ *
+ * Fire a write callback to reply after a client request, calling the HTTP write
+ * callback
+ */
 static void enqueue_http_write(const struct http_transaction *http) {
     if (http->tcp_session.status == FORWARDING_REQUEST)
         ev_fire_event(http->tcp_session.ctx, http->tcp_session.pipe[BACKEND].fd,
@@ -890,6 +930,12 @@ static void enqueue_http_write(const struct http_transaction *http) {
                       EV_WRITE, http_write_callback, (void *) http);
 }
 
+/*
+ * LLB_TCP_MODE helper
+ *
+ * Fire a read callback to react accordingly to the descriptor ready to be used,
+ * calling the TCP read callback
+ */
 static void enqueue_tcp_read(const struct tcp_session *tcp) {
     if (tcp->status == WAITING_REQUEST)
         ev_fire_event(tcp->ctx, tcp->pipe[CLIENT].fd,
@@ -899,6 +945,12 @@ static void enqueue_tcp_read(const struct tcp_session *tcp) {
                       EV_READ, tcp_read_callback, (void *) tcp);
 }
 
+/*
+ * LLB_TCP_MODE helper
+ *
+ * Fire a write callback to reply after a client request, calling the TCP write
+ * callback
+ */
 static void enqueue_tcp_write(const struct tcp_session *tcp) {
     if (tcp->status == FORWARDING_REQUEST)
         ev_fire_event(tcp->ctx, tcp->pipe[BACKEND].fd,
@@ -907,6 +959,11 @@ static void enqueue_tcp_write(const struct tcp_session *tcp) {
         ev_fire_event(tcp->ctx, tcp->pipe[CLIENT].fd,
                       EV_WRITE, tcp_write_callback, (void *) tcp);
 }
+
+/*
+ * Helper for the WEIGHTED ROUND ROBIN algorithm, calculate the global maximum
+ * divisor on an array of values (values are the weight of each backend)
+ */
 
 static inline int gcd(int a, int b) {
     if (a == 0)
@@ -923,6 +980,12 @@ static inline int GCD(int *arr, size_t size) {
     }
     return result;
 }
+
+/*
+ * ===================
+ *  Main exposed APIs
+ * ===================
+ */
 
 /*
  * Main entry point for the server, to be called with an array of frontend
@@ -995,6 +1058,25 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
         SSL_CTX_free(server.ssl_ctx);
         openssl_cleanup();
     }
+
+    // release resources
+    if (conf->mode == LLB_HTTP_MODE) {
+        struct http_transaction *ptr;
+        for (size_t i = 0; i < MAX_HTTP_TRANSACTIONS; ++i) {
+            ptr = memorypool_advance_pointer(server.pool, i);
+            if (ptr->tcp_session.stream.buf)
+                llb_free(ptr->tcp_session.stream.buf);
+        }
+    } else {
+        struct tcp_session *ptr;
+        for (size_t i = 0; i < MAX_HTTP_TRANSACTIONS; ++i) {
+            ptr = memorypool_advance_pointer(server.pool, i);
+            if (ptr->stream.buf)
+                llb_free(ptr->stream.buf);
+        }
+    }
+
+    memorypool_destroy(server.pool);
     llb_free(loop_start.fds);
 
     log_info("llb v%s exiting", VERSION);

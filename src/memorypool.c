@@ -112,6 +112,11 @@ void memorypool_free(struct memorypool *pool, void *ptr) {
     pool->block_used--;
 }
 
+void *memorypool_advance_pointer(struct memorypool *pool, size_t i) {
+    void *ptr = (intptr_t *) ((char *) pool->memory + i * pool->blocksize);
+    return ptr;
+}
+
 static void memorypool_resize(struct memorypool *pool) {
     pool->blocks_nr *= 2;
     size_t newsize = pool->blocks_nr * pool->blocksize;

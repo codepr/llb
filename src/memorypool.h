@@ -46,5 +46,6 @@ struct memorypool *memorypool_new(size_t, size_t);
 void memorypool_destroy(struct memorypool *);
 void *memorypool_alloc(struct memorypool *);
 void memorypool_free(struct memorypool *, void *);
+void *memorypool_advance_pointer(struct memorypool *, size_t);
 
 #endif
