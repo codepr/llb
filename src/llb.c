@@ -117,7 +117,7 @@ int main (int argc, char **argv) {
     // Override default DEBUG mode
     conf->loglevel = debug == 1 ? DEBUG : WARNING;
 
-    conf->mode = STREQ(mode, "http", 4) ? LLB_HTTP_MODE : LLB_TCP_MODE;
+    conf->mode = (mode && STREQ(mode, "tcp", 3)) ? LLB_TCP_MODE : LLB_HTTP_MODE;
 
     // Try to load a configuration, if found
     if (!config_load(confpath)) {

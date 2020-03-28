@@ -290,10 +290,10 @@ static void tcp_session_init(struct tcp_session *tcp) {
     tcp->status = WAITING_REQUEST;
     tcp->stream.size = 0;
     tcp->stream.toread = 0;
-    tcp->stream.capacity = MAX_HTTP_TRANSACTION_SIZE;
+    tcp->stream.capacity = MAX_STREAM_BUF_SIZE;
     if (!tcp->stream.buf)
         tcp->stream.buf =
-            llb_calloc(MAX_HTTP_TRANSACTION_SIZE, sizeof(unsigned char));
+            llb_calloc(MAX_STREAM_BUF_SIZE, sizeof(unsigned char));
 }
 
 /*
@@ -1008,10 +1008,10 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
         server.gcd = ATOMIC_VAR_INIT(GCD(weights, conf->backends_nr));
     }
     if (conf->mode == LLB_HTTP_MODE)
-        server.pool = memorypool_new(MAX_HTTP_TRANSACTIONS,
+        server.pool = memorypool_new(MAX_ACTIVE_SESSIONS,
                                      sizeof(struct http_transaction));
     else
-        server.pool = memorypool_new(MAX_HTTP_TRANSACTIONS,
+        server.pool = memorypool_new(MAX_ACTIVE_SESSIONS,
                                      sizeof(struct tcp_session));
 
     /* Setup SSL in case of flag true */
@@ -1062,14 +1062,14 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
     // release resources
     if (conf->mode == LLB_HTTP_MODE) {
         struct http_transaction *ptr;
-        for (size_t i = 0; i < MAX_HTTP_TRANSACTIONS; ++i) {
+        for (size_t i = 0; i < MAX_ACTIVE_SESSIONS; ++i) {
             ptr = memorypool_advance_pointer(server.pool, i);
             if (ptr->tcp_session.stream.buf)
                 llb_free(ptr->tcp_session.stream.buf);
         }
     } else {
         struct tcp_session *ptr;
-        for (size_t i = 0; i < MAX_HTTP_TRANSACTIONS; ++i) {
+        for (size_t i = 0; i < MAX_ACTIVE_SESSIONS; ++i) {
             ptr = memorypool_advance_pointer(server.pool, i);
             if (ptr->stream.buf)
                 llb_free(ptr->stream.buf);

@@ -48,8 +48,8 @@
  * should be equal to roughly ~100 MB, read and write buffers are initialized
  * lazily
  */
-#define MAX_HTTP_TRANSACTIONS  1024 * 512
-#define MAX_HTTP_TRANSACTION_SIZE 4096
+#define MAX_ACTIVE_SESSIONS 1 << 19
+#define MAX_STREAM_BUF_SIZE 1 << 12
 
 /*
  * Error codes for packet reception, signaling respectively

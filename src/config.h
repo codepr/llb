@@ -63,7 +63,7 @@
 
 // Default parameters
 
-#define VERSION                     "0.1.3"
+#define VERSION                     "0.1.4"
 #define DEFAULT_MODE                LLB_HTTP_MODE
 #define DEFAULT_LOG_LEVEL           DEBUG
 #define DEFAULT_CONF_PATH           "/etc/llb/llb.conf"
