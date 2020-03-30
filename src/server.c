@@ -434,67 +434,6 @@ clientdc:
  * ===========
  */
 
-static void tcp_write_callback(struct ev_ctx *ctx, void *arg) {
-    struct tcp_session *tcp = arg;
-    int err = tcp_session_write(tcp);
-    switch (err) {
-        case LLB_SUCCESS: // OK
-            /*
-             * Rearm descriptor making it ready to receive input,
-             * read_callback will be the callback to be used; also reset the
-             * read buffer status for the client.
-             */
-            // reset the pointer to the beginning of the buffer
-            tcp->stream.size = 0;
-            if (tcp->status == FORWARDING_REQUEST) {
-                tcp->status = WAITING_RESPONSE;
-            } else if (tcp->status == FORWARDING_RESPONSE) {
-                tcp->status = WAITING_REQUEST;
-            }
-            enqueue_tcp_read(tcp);
-            break;
-        case -ERREAGAIN:
-            enqueue_tcp_write(tcp);
-            break;
-        default:
-            tcp_session_close(tcp);
-            break;
-    }
-}
-
-/*
- * Callback dedicated to client replies, try to send as much data as possible
- * epmtying the client buffer and rearming the socket descriptor for reading
- * after
- */
-static void http_write_callback(struct ev_ctx *ctx, void *arg) {
-    struct http_transaction *http = arg;
-    int err = tcp_session_write(&http->tcp_session);
-    switch (err) {
-        case LLB_SUCCESS: // OK
-            /*
-             * Rearm descriptor making it ready to receive input,
-             * read_callback will be the callback to be used; also reset the
-             * read buffer status for the client.
-             */
-            if (http->tcp_session.status == FORWARDING_REQUEST) {
-                http->tcp_session.status = WAITING_RESPONSE;
-                // reset the pointer to the beginning of the buffer
-                http->tcp_session.stream.size = 0;
-                enqueue_http_read(http);
-            } else if (http->tcp_session.status == FORWARDING_RESPONSE) {
-                http_transaction_close(http);
-            }
-            break;
-        case -ERREAGAIN:
-            enqueue_http_write(http);
-            break;
-        default:
-            http_transaction_close(http);
-            break;
-    }
-}
-
 /*
  * Handle incoming connections, create a a fresh new struct client structure
  * and link it to the fd, ready to be set in EV_READ event, then schedule a
@@ -555,6 +494,96 @@ static void accept_callback(struct ev_ctx *ctx, void *data) {
     }
 }
 
+/*
+ * Callback dedicated to client replies, try to send as much data as possible
+ * emptying the client buffer and rearming the socket descriptor for reading
+ * after.
+ *
+ * It's a TCP-mode callback so we don't expect to close the communication ever.
+ * We'll just juggle with read/write till the communication is over, and this
+ * will happen only if the client decide to close the connection or a socket
+ * error occurs.
+ */
+static void tcp_write_callback(struct ev_ctx *ctx, void *arg) {
+    struct tcp_session *tcp = arg;
+    int err = tcp_session_write(tcp);
+    switch (err) {
+        case LLB_SUCCESS: // OK
+            /*
+             * Rearm descriptor making it ready to receive input,
+             * read_callback will be the callback to be used; also reset the
+             * read buffer status for the client.
+             */
+            // reset the pointer to the beginning of the buffer
+            tcp->stream.size = 0;
+            if (tcp->status == FORWARDING_REQUEST) {
+                tcp->status = WAITING_RESPONSE;
+            } else if (tcp->status == FORWARDING_RESPONSE) {
+                tcp->status = WAITING_REQUEST;
+            }
+            enqueue_tcp_read(tcp);
+            break;
+        case -ERREAGAIN:
+            /*
+             * We haven't written all bytes we expected in the last write call
+             * just enqueue another write call for the next loop cycle,
+             * hopefully the kernel will be ready to write out the remaining
+             * bunch of data.
+             */
+            enqueue_tcp_write(tcp);
+            break;
+        default:
+            tcp_session_close(tcp);
+            break;
+    }
+}
+
+/*
+ * Callback dedicated to client replies, try to send as much data as possible
+ * emptying the client buffer and rearming the socket descriptor for reading
+ * after.
+ *
+ * It's an HTTP-mode callback so we expect that if the tcp_session of the HTTP
+ * transaction is in FORWARDING_RESPONSE state (we alredy received the response
+ * from the backend) we can just terminate the transaction after.
+ */
+static void http_write_callback(struct ev_ctx *ctx, void *arg) {
+    struct http_transaction *http = arg;
+    int err = tcp_session_write(&http->tcp_session);
+    switch (err) {
+        case LLB_SUCCESS: // OK
+            /*
+             * Rearm descriptor making it ready to receive input,
+             * read_callback will be the callback to be used; also reset the
+             * read buffer status for the client.
+             */
+            if (http->tcp_session.status == FORWARDING_REQUEST) {
+                http->tcp_session.status = WAITING_RESPONSE;
+                // reset the pointer to the beginning of the buffer
+                http->tcp_session.stream.size = 0;
+                enqueue_http_read(http);
+            } else if (http->tcp_session.status == FORWARDING_RESPONSE) {
+                http_transaction_close(http);
+            }
+            break;
+        case -ERREAGAIN:
+            enqueue_http_write(http);
+            break;
+        default:
+            http_transaction_close(http);
+            break;
+    }
+}
+
+/*
+ * Reading packet callback, it's the main function that will be called every
+ * time a connected client has some data to be read, notified by the eventloop
+ * context.
+ *
+ * Being a TCP-mode read callback, exactly as the `tcp_write_callback` we don't
+ * expect any termination of the communication except for connection closed by
+ * the client or dropped by a socket error
+ */
 static void tcp_read_callback(struct ev_ctx *ctx, void *data) {
     struct tcp_session *tcp = data;
     /*
@@ -593,16 +622,14 @@ static void tcp_read_callback(struct ev_ctx *ctx, void *data) {
             tcp_session_close(tcp);
             break;
         case -ERREAGAIN:
-            // TODO, check for content-length in case of non-chunked mode
             /*
              * We read all we could from the last read call, it's not certain
              * that all data is read, especially in chunked mode, so we proceed
-             * processing the payload only when we're sure we finished reading
-             * which happens in two cases:
-             * - chunked response: the last chunk ends with a 0 length mini-header
-             *   followed by 2 CRLF like "0\r\n\r\n"
-             * - non-chunked response: a content-length header should be present
-             *   stating the expected length of the transmission
+             * processing the payload only when we're sure we finished reading.
+             *
+             * To make sure we read all incoming data we just re-schedule a new
+             * read on the next loop cycle, hoefully the kernel buffer will be
+             * read-ready again and we would complete our reception.
              */
             enqueue_tcp_read(tcp);
             break;
@@ -613,6 +640,10 @@ static void tcp_read_callback(struct ev_ctx *ctx, void *data) {
  * Reading packet callback, it's the main function that will be called every
  * time a connected client has some data to be read, notified by the eventloop
  * context.
+ *
+ * It's an HTTP-mode read callback, so it acts as an intermediary step between
+ * the client and the backend, shortly after a reply the communication will be
+ * closed.
  */
 static void http_read_callback(struct ev_ctx *ctx, void *data) {
     struct http_transaction *http = data;
@@ -830,7 +861,8 @@ static void route_tcp_to_backend(struct ev_ctx *ctx, struct tcp_session *tcp) {
  * configuration, it chooses a backend to connect to and redirects the request
  * toward it by registering the newly connected descriptor to the event-loop
  * with the write callback.
- * Current algorithms supported are round-robin and hash-based routing.
+ * A bunch of the most common algorithms are supported: round-robin, hash-based
+ * routing, weighted-round-robin, random routing and leastconn.
  */
 static void process_http_request(struct ev_ctx *ctx,
                                  struct http_transaction *http) {
