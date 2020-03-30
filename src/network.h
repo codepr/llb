@@ -72,6 +72,7 @@ struct connection {
 struct stream {
     size_t size;
     size_t toread;
+    size_t towrite;
     size_t capacity;
     unsigned char *buf;
 };

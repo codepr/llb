@@ -163,7 +163,10 @@ static void process_http_request(struct ev_ctx *, struct http_transaction *);
  */
 static void process_http_response(struct ev_ctx *, struct http_transaction *);
 
-/* Periodic routine to perform healthchecks on backends */
+/* Periodic routine to perform healthchecks on backends, currently just tries
+ * to connect to the backends registered, probably a more proper way of doing
+ * it should be to just ping them with an ICMP echo requet packet
+ */
 static void backends_healthcheck(struct ev_ctx *, void *);
 
 /*
@@ -290,6 +293,7 @@ static void tcp_session_init(struct tcp_session *tcp) {
     tcp->status = WAITING_REQUEST;
     tcp->stream.size = 0;
     tcp->stream.toread = 0;
+    tcp->stream.towrite = 0;
     tcp->stream.capacity = MAX_STREAM_BUF_SIZE;
     if (!tcp->stream.buf)
         tcp->stream.buf =
@@ -304,6 +308,7 @@ static void tcp_session_init(struct tcp_session *tcp) {
 static void tcp_session_close(struct tcp_session *tcp) {
     tcp->stream.size = 0;
     tcp->stream.toread = 0;
+    tcp->stream.towrite = 0;
     tcp->status = WAITING_REQUEST;
     ev_del_fd(tcp->ctx, tcp->pipe[CLIENT].fd);
     ev_del_fd(tcp->ctx, tcp->pipe[BACKEND].fd);
@@ -378,12 +383,15 @@ static inline int tcp_session_read(struct tcp_session *tcp) {
 
     if (errno != EAGAIN && errno != EWOULDBLOCK && nread < 0)
         return -ERRSOCKETERR;
-        //return nread == -1 ? -ERRSOCKETERR : -ERRCLIENTDC;
 
     if (conf->mode == LLB_TCP_MODE && nread == 0)
         return -ERRCLIENTDC;
 
-    if (conf->mode == LLB_HTTP_MODE && (errno == EAGAIN || errno == EWOULDBLOCK))
+    tcp->stream.toread =
+        tcp->stream.toread == 0 ? 0 : tcp->stream.toread - nread;
+
+    if ((conf->mode == LLB_HTTP_MODE || tcp->stream.toread > 0)
+        && (errno == EAGAIN || errno == EWOULDBLOCK))
         return -ERREAGAIN;
 
     return LLB_SUCCESS;
@@ -407,8 +415,11 @@ static inline int tcp_session_write(struct tcp_session *tcp) {
     if (errno != EAGAIN && errno != EWOULDBLOCK && wrote < 0)
         goto clientdc;
 
-    //if (errno == EAGAIN || errno == EWOULDBLOCK)
-    //    return -ERREAGAIN;
+    tcp->stream.towrite =
+        tcp->stream.towrite == 0 ? 0 : tcp->stream.towrite - wrote;
+
+    if (tcp->stream.towrite > 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+        return -ERREAGAIN;
 
     return LLB_SUCCESS;
 
@@ -560,6 +571,7 @@ static void tcp_read_callback(struct ev_ctx *ctx, void *data) {
              * the response back to the requesting client otherwise
              * (WAITING_RESPONSE state)
              */
+            tcp->stream.towrite = tcp->stream.size;
             switch (tcp->status) {
                 case WAITING_REQUEST:
                     tcp->status = FORWARDING_REQUEST;
@@ -609,6 +621,7 @@ static void http_read_callback(struct ev_ctx *ctx, void *data) {
      * encoding the content according to the protocol
      */
     int rc = tcp_session_read(&http->tcp_session);
+    http->tcp_session.stream.towrite = http->tcp_session.stream.size;
     switch (rc) {
         case LLB_SUCCESS:
             /*
