@@ -20,7 +20,8 @@ Features:
 - Daemon mode
 - Multithread event-loop
 - HTTP and TCP load-balancing
-- Round-robin, weighted round-robin, hash-balancing, random-balancing, leastconn
+- Round-robin, weighted round-robin, hash-balancing, random-balancing,
+  leastconn, leasttraffic
 - Pretty small (~2000 sloc) and little dependencies (openssl)
 
 Next:
@@ -66,6 +67,8 @@ frontends 127.0.0.1:8789,127.0.0.1:8790,127.0.0.1:8791
 backends 127.0.0.1:6090,127.0.0.1:6090,127.0.0.1:6090
 
 # Set round robin as balancing algorithm
+# Other options available can be
+# random-balancing | hash-balancing | leastconn | leasttraffic | weighted-round-robin
 load_balancing round-robin
 
 # Logging configuration
