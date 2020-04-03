@@ -26,6 +26,7 @@
  */
 
 #include <fcntl.h>
+#include <float.h>
 #include <errno.h>
 #include <string.h>
 #include <pthread.h>
@@ -802,23 +803,24 @@ static int select_backend(struct backend **backend_ptr, const char *buf) {
              */
             while (!backend || backend->alive == false) {
                 struct timeval tv;
-                unsigned long long ms = 0LL, now = 0LL, diff = 0LL;
-                unsigned long long  min = ULLONG_MAX, curr_min = ULLONG_MAX;
+                double diff = 0.0, curr_min = DBL_MAX, min = DBL_MAX;
+                unsigned long long ms = 0LL, now = 0LL;
                 gettimeofday(&tv, NULL);
+                now = (unsigned long long ) tv.tv_sec * 1000 + \
+                      (unsigned long long) tv.tv_usec / 1000;
                 for (int i = 0; i < conf->backends_nr; ++i) {
-                    if (min > curr_min) {
-                        min = curr_min;
-                        next = i;
-                    }
-                    now = (unsigned long long ) tv.tv_sec * 1000 + \
-                          (unsigned long long) tv.tv_usec / 1000;
                     ms = (unsigned long long ) \
                          server.backends[i].start.tv_sec * 1000 +
                          (unsigned long long)
                          server.backends[i].start.tv_usec / 1000;
-                    diff = server.backends[i].bytecount / (now - ms);
+                    // TODO check for 0 division
+                    diff = (server.backends[i].bytecount * 1000) / (now - ms);
                     if (curr_min > diff)
                         curr_min = diff;
+                    if (min > curr_min) {
+                        min = curr_min;
+                        next = i;
+                    }
                 }
                 backend = &server.backends[next];
             }
