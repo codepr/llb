@@ -81,7 +81,7 @@ struct backend {
     char host[0xFF];
     int port;
     int weight;  // to be ignored in case of balancing != WEIGHTED_ROUND_ROBIN
-    time_t start;
+    struct timeval start;
     volatile atomic_int active_connections;
     volatile atomic_size_t bytecount;
     volatile atomic_bool alive;

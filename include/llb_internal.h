@@ -47,7 +47,8 @@
 #define HASH_BALANCING       1
 #define RANDOM_BALANCING     2
 #define LEASTCONN            3
-#define WEIGHTED_ROUND_ROBIN 4
+#define LEASTTRAFFIC         4
+#define WEIGHTED_ROUND_ROBIN 5
 
 static inline void *llb_malloc(size_t size) {
     void *ptr = malloc(size);

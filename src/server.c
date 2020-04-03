@@ -29,6 +29,7 @@
 #include <errno.h>
 #include <string.h>
 #include <pthread.h>
+#include <sys/time.h>
 #include "ev.h"
 #include "log.h"
 #include "config.h"
@@ -260,6 +261,7 @@ static const char *llberr(int rc) {
  * flagged dead
  */
 static void backends_healthcheck(struct ev_ctx *ctx, void *data) {
+    (void) ctx;
     (void) data;
     int fd = 0;
     for (int i = 0; i < conf->backends_nr; ++i) {
@@ -271,6 +273,8 @@ static void backends_healthcheck(struct ev_ctx *ctx, void *data) {
         pthread_mutex_unlock(&mutex);
 #endif
         if (fd < 0) {
+            if (server.backends[i].alive == false)
+                gettimeofday(&server.backends[i].start, NULL);
             server.backends[i].alive = false;
         } else {
             server.backends[i].alive = true;
@@ -591,6 +595,7 @@ static void http_write_callback(struct ev_ctx *ctx, void *arg) {
  * the client or dropped by a socket error
  */
 static void tcp_read_callback(struct ev_ctx *ctx, void *data) {
+    (void) ctx;
     struct tcp_session *tcp = data;
     /*
      * Received a bunch of data from a client,  we need to read the bytes and
@@ -654,6 +659,7 @@ static void tcp_read_callback(struct ev_ctx *ctx, void *data) {
  * closed.
  */
 static void http_read_callback(struct ev_ctx *ctx, void *data) {
+    (void) ctx;
     struct http_transaction *http = data;
     /*
      * Received a bunch of data from a client,  we need to read the bytes and
@@ -727,9 +733,9 @@ static int select_backend(struct backend **backend_ptr, const char *buf) {
     switch (conf->load_balancing) {
         case ROUND_ROBIN:
             /*
-             * 1. ROUND ROBIN balancing, just modulo the total number of backends to
-             * obtain the index of the backend, iterate over and over in case of dead
-             * endpoints
+             * 1. ROUND ROBIN balancing, just modulo the total number of
+             * backends to obtain the index of the backend, iterate over and
+             * over in case of dead endpoints
              */
             while (!backend || backend->alive == false) {
                 next = server.current_backend++ % conf->backends_nr;
@@ -738,10 +744,10 @@ static int select_backend(struct backend **backend_ptr, const char *buf) {
             break;
         case HASH_BALANCING:
             /*
-             * 2. HASH BALANCING, uses a hash function to obtain a value from the
-             * entire request and modulo the total number of the backends to select a
-             * backend. Try hashing different parts of the request in case of dead
-             * endpoints selected
+             * 2. HASH BALANCING, uses a hash function to obtain a value from
+             * the entire request and modulo the total number of the backends
+             * to select a backend. Try hashing different parts of the request
+             * in case of dead endpoints selected
              */
             ptr = (char *) buf;
             while (!backend || backend->alive == false) {
@@ -752,10 +758,10 @@ static int select_backend(struct backend **backend_ptr, const char *buf) {
             break;
         case RANDOM_BALANCING:
             /*
-             * 3. RANDOM BALANCING, just distribute the traffic in random manner
-             * between all alive backends, it's the dumbest heuristic, can work as
-             * well as the ROUND ROBIN one when all the backends servers have
-             * similar specs
+             * 3. RANDOM BALANCING, just distribute the traffic in random
+             * manner between all alive backends, it's the dumbest heuristic,
+             * can work as well as the ROUND ROBIN one when all the backends
+             * servers have similar specs
              */
             while (!backend || backend->alive == false) {
                 next = RANDOM(0, conf->backends_nr);
@@ -788,9 +794,38 @@ static int select_backend(struct backend **backend_ptr, const char *buf) {
                 backend = &server.backends[next];
             }
             break;
+        case LEASTTRAFFIC:
+            /*
+             * 5. LEASTTRAFFIC, iterate through all backends and choose the one
+             * with the lower traffic, simply obtained by dividing the bytes
+             * count for the number of milliseconds the server has been active
+             */
+            while (!backend || backend->alive == false) {
+                struct timeval tv;
+                unsigned long long ms = 0LL, now = 0LL, diff = 0LL;
+                unsigned long long  min = ULLONG_MAX, curr_min = ULLONG_MAX;
+                gettimeofday(&tv, NULL);
+                for (int i = 0; i < conf->backends_nr; ++i) {
+                    if (min > curr_min) {
+                        min = curr_min;
+                        next = i;
+                    }
+                    now = (unsigned long long ) tv.tv_sec * 1000 + \
+                          (unsigned long long) tv.tv_usec / 1000;
+                    ms = (unsigned long long ) \
+                         server.backends[i].start.tv_sec * 1000 +
+                         (unsigned long long)
+                         server.backends[i].start.tv_usec / 1000;
+                    diff = server.backends[i].bytecount / (now - ms);
+                    if (curr_min > diff)
+                        curr_min = diff;
+                }
+                backend = &server.backends[next];
+            }
+            break;
         case WEIGHTED_ROUND_ROBIN:
             /*
-             * 5. WEIGHTED ROUND ROBIN, like the round robin selection but each
+             * 6. WEIGHTED ROUND ROBIN, like the round robin selection but each
              * backend has a weight value that defines the priority in
              * receiving work (e.g. maybe some machines have better hw specs
              * and thus can handle heavier loads -> higher weight value)
@@ -913,6 +948,7 @@ static void process_http_request(struct ev_ctx *ctx,
  */
 static void process_http_response(struct ev_ctx *ctx,
                                   struct http_transaction *http) {
+    (void) ctx;
     http->tcp_session.status = FORWARDING_RESPONSE;
     enqueue_http_write(http);
 }
@@ -1027,7 +1063,7 @@ static inline int gcd(int a, int b) {
 
 static inline int GCD(int *arr, size_t size) {
     int result = arr[0];
-    for (int i = 1; i < size; ++i) {
+    for (size_t i = 1; i < size; ++i) {
         result = gcd(arr[i], result);
         if (result == 1)
             return 1;
@@ -1052,7 +1088,7 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
     server.backends = conf->backends;
     for (int i = 0; i < conf->backends_nr; ++i) {
         server.backends[i].alive = ATOMIC_VAR_INIT(true);
-        server.backends[i].start = time(NULL);
+        gettimeofday(&server.backends[i].start, NULL);
         server.backends[i].bytecount = ATOMIC_VAR_INIT(0);
     }
     server.current_backend =
