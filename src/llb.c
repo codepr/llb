@@ -162,6 +162,8 @@ int main (int argc, char **argv) {
                     conf->load_balancing = RANDOM_BALANCING;
                 else if (STREQ("leastconn", load_balancing, 9))
                     conf->load_balancing = LEASTCONN;
+                else if (STREQ("leasttraffic", load_balancing, 12))
+                    conf->load_balancing = LEASTTRAFFIC;
                 else if (STREQ("weighted-round-robin", load_balancing, 20))
                     conf->load_balancing = WEIGHTED_ROUND_ROBIN;
                 else

@@ -67,6 +67,8 @@ static inline const char *strlb(int lb) {
             return "random-balancing";
         case LEASTCONN:
             return "leastconn";
+        case LEASTTRAFFIC:
+            return "leasttraffic";
         case WEIGHTED_ROUND_ROBIN:
             return "weighted round-robin";
         default:
@@ -209,6 +211,8 @@ static void add_config_value(const char *key, const char *value) {
             config.load_balancing = RANDOM_BALANCING;
         else if (STREQ("leastconn", value, 9))
             config.load_balancing = LEASTCONN;
+        else if (STREQ("leasttraffic", value, 12))
+            config.load_balancing = LEASTTRAFFIC;
         else if (STREQ("weighted-round-robin", value, 20))
             config.load_balancing = WEIGHTED_ROUND_ROBIN;
         else
