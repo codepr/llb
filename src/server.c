@@ -183,12 +183,14 @@ static inline int http_header_length(const struct http_transaction *);
 #define CHUNKED_COMPLETE(tcp) \
     strcmp((char *) (tcp)->stream.buf + (tcp)->stream.size - 5, "0\r\n\r\n") == 0
 
-#define PROCESS_HTTP_STREAM(http) do {                           \
-    if ((http)->tcp_session.status == WAITING_REQUEST) {         \
-        process_http_request((http)->tcp_session.ctx, (http));   \
-    } else if ((http)->tcp_session.status == WAITING_RESPONSE) { \
-        process_http_response((http)->tcp_session.ctx, (http));  \
-    }                                                            \
+#define PROCESS_HTTP_STREAM(http) do {                                \
+    if ((http)->tcp_session.status == WAITING_REQUEST) {              \
+        process_http_request((http)->tcp_session.ctx, (http));        \
+    } else if ((http)->tcp_session.status == WAITING_RESPONSE) {      \
+        server.backends[(http)->tcp_session.backend_idx].bytecount += \
+            (http)->tcp_session.stream.size;                          \
+        process_http_response((http)->tcp_session.ctx, (http));       \
+    }                                                                 \
 } while (0);
 
 /* Parse header length by scanning all chars till the double CRLF */
@@ -517,6 +519,8 @@ static void tcp_write_callback(struct ev_ctx *ctx, void *arg) {
             // reset the pointer to the beginning of the buffer
             tcp->stream.size = 0;
             if (tcp->status == FORWARDING_REQUEST) {
+                server.backends[tcp->backend_idx].bytecount +=
+                    tcp->stream.size;
                 tcp->status = WAITING_RESPONSE;
             } else if (tcp->status == FORWARDING_RESPONSE) {
                 tcp->status = WAITING_REQUEST;
@@ -559,6 +563,8 @@ static void http_write_callback(struct ev_ctx *ctx, void *arg) {
              */
             if (http->tcp_session.status == FORWARDING_REQUEST) {
                 http->tcp_session.status = WAITING_RESPONSE;
+                server.backends[http->tcp_session.backend_idx].bytecount +=
+                    http->tcp_session.stream.size;
                 // reset the pointer to the beginning of the buffer
                 http->tcp_session.stream.size = 0;
                 enqueue_http_read(http);
@@ -606,6 +612,8 @@ static void tcp_read_callback(struct ev_ctx *ctx, void *data) {
                     tcp->status = FORWARDING_REQUEST;
                     break;
                 case WAITING_RESPONSE:
+                    server.backends[tcp->backend_idx].bytecount +=
+                        tcp->stream.size;
                     tcp->status = FORWARDING_RESPONSE;
                     break;
             }
@@ -714,7 +722,7 @@ static void http_read_callback(struct ev_ctx *ctx, void *data) {
  */
 static int select_backend(struct backend **backend_ptr, const char *buf) {
     struct backend *backend = NULL;
-    volatile atomic_int next = ATOMIC_VAR_INIT(0);
+    volatile atomic_uint next = ATOMIC_VAR_INIT(0);
     char *ptr = NULL;
     switch (conf->load_balancing) {
         case ROUND_ROBIN:
@@ -825,7 +833,8 @@ static int select_backend(struct backend **backend_ptr, const char *buf) {
 
 static void route_tcp_to_backend(struct ev_ctx *ctx, struct tcp_session *tcp) {
     struct backend *backend = NULL;
-    volatile int next = select_backend(&backend, (const char *) tcp->stream.buf);
+    volatile unsigned int next =
+        select_backend(&backend, (const char *) tcp->stream.buf);
     /*
      * Create a connection structure to handle the client context of the
      * backend new communication channel.
@@ -867,7 +876,7 @@ static void route_tcp_to_backend(struct ev_ctx *ctx, struct tcp_session *tcp) {
 static void process_http_request(struct ev_ctx *ctx,
                                  struct http_transaction *http) {
     struct backend *backend = NULL;
-    volatile int next =
+    volatile unsigned int next =
         select_backend(&backend, (const char *) http->tcp_session.stream.buf);
     /*
      * Create a connection structure to handle the client context of the
@@ -876,12 +885,12 @@ static void process_http_request(struct ev_ctx *ctx,
     connection_init(&http->tcp_session.pipe[BACKEND],
                     conf->tls ? server.ssl_ctx : NULL);
 #if THREADSNR > 0
-        pthread_mutex_lock(&mutex);
+    pthread_mutex_lock(&mutex);
 #endif
     int fd = open_connection(&http->tcp_session.pipe[BACKEND],
                              backend->host, backend->port);
 #if THREADSNR > 0
-        pthread_mutex_unlock(&mutex);
+    pthread_mutex_unlock(&mutex);
 #endif
     if (fd == 0)
         return;
@@ -1041,8 +1050,11 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
 
     /* Initialize global llb instance */
     server.backends = conf->backends;
-    for (int i = 0; i < conf->backends_nr; ++i)
+    for (int i = 0; i < conf->backends_nr; ++i) {
         server.backends[i].alive = ATOMIC_VAR_INIT(true);
+        server.backends[i].start = time(NULL);
+        server.backends[i].bytecount = ATOMIC_VAR_INIT(0);
+    }
     server.current_backend =
         ATOMIC_VAR_INIT(conf->load_balancing == WEIGHTED_ROUND_ROBIN ? -1 : 0) ;
     server.current_weight = ATOMIC_VAR_INIT(0);

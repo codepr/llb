@@ -81,7 +81,9 @@ struct backend {
     char host[0xFF];
     int port;
     int weight;  // to be ignored in case of balancing != WEIGHTED_ROUND_ROBIN
+    time_t start;
     volatile atomic_int active_connections;
+    volatile atomic_size_t bytecount;
     volatile atomic_bool alive;
 };
 
@@ -96,7 +98,7 @@ struct backend {
  * clients.
  */
 struct server {
-    volatile atomic_int current_backend;
+    volatile atomic_uint current_backend;
     volatile atomic_int current_weight;
     volatile atomic_int gcd;
     struct memorypool *pool; /* A memory pool for clients allocation */
