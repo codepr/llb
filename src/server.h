@@ -51,6 +51,8 @@
 #define MAX_ACTIVE_SESSIONS 1 << 19
 #define MAX_STREAM_BUF_SIZE 1 << 12
 
+#define HTTP_METHOD_MAX_LEN 256
+
 /*
  * Error codes for packet reception, signaling respectively
  * - client disconnection

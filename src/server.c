@@ -274,10 +274,15 @@ static void backends_healthcheck(struct ev_ctx *ctx, void *data) {
         pthread_mutex_unlock(&mutex);
 #endif
         if (fd < 0) {
-            if (server.backends[i].alive == false)
-                gettimeofday(&server.backends[i].start, NULL);
             server.backends[i].alive = false;
+            log_debug("Backend %s:%i failed health check, flagged as offline",
+                      server.backends[i].host, server.backends[i].port);
         } else {
+            if (server.backends[i].alive == false) {
+                gettimeofday(&server.backends[i].start, NULL);
+                log_debug("Backend %s:%i back online",
+                          server.backends[i].host, server.backends[i].port);
+            }
             server.backends[i].alive = true;
             close(fd);
         }
@@ -512,6 +517,7 @@ static void accept_callback(struct ev_ctx *ctx, void *data) {
  * error occurs.
  */
 static void tcp_write_callback(struct ev_ctx *ctx, void *arg) {
+    (void) ctx;
     struct tcp_session *tcp = arg;
     int err = tcp_session_write(tcp);
     switch (err) {
@@ -557,6 +563,7 @@ static void tcp_write_callback(struct ev_ctx *ctx, void *arg) {
  * from the backend) we can just terminate the transaction after.
  */
 static void http_write_callback(struct ev_ctx *ctx, void *arg) {
+    (void) ctx;
     struct http_transaction *http = arg;
     int err = tcp_session_write(&http->tcp_session);
     switch (err) {
@@ -728,6 +735,14 @@ static void http_read_callback(struct ev_ctx *ctx, void *data) {
  * - Weighted round robin
  */
 static int select_backend(struct backend **backend_ptr, const char *buf) {
+    // Check for at least one backend online
+    bool ok = false;
+    for (int i = 0; i < conf->backends_nr && !ok; ++i)
+        if (server.backends[i].alive == true)
+            ok = true;
+    // No backends onlne, return an error
+    if (!ok)
+        return LLB_FAILURE;
     struct backend *backend = NULL;
     volatile atomic_uint next = ATOMIC_VAR_INIT(0);
     char *ptr = NULL;
@@ -870,8 +885,14 @@ static int select_backend(struct backend **backend_ptr, const char *buf) {
 
 static void route_tcp_to_backend(struct ev_ctx *ctx, struct tcp_session *tcp) {
     struct backend *backend = NULL;
-    volatile unsigned int next =
+    volatile int next =
         select_backend(&backend, (const char *) tcp->stream.buf);
+    // All backends are currently offline
+    // TODO must be handled
+    if (next == LLB_FAILURE) {
+        log_debug("No backends alive at the moment");
+        return;
+    }
     /*
      * Create a connection structure to handle the client context of the
      * backend new communication channel.
@@ -891,12 +912,16 @@ static void route_tcp_to_backend(struct ev_ctx *ctx, struct tcp_session *tcp) {
         return;
     }
 
+    log_debug("Forwarding TCP connection to %s:%i",
+              backend->host, backend->port);
+
     backend->active_connections++;
     tcp->status = WAITING_REQUEST;
     tcp->backend_idx = next;
 
     /* Add it to the epoll loop */
-    ev_register_event(ctx, tcp->pipe[CLIENT].fd, EV_READ, tcp_read_callback, tcp);
+    ev_register_event(ctx, tcp->pipe[CLIENT].fd,
+                      EV_READ, tcp_read_callback, tcp);
     ev_register_event(ctx, fd, EV_READ, tcp_read_callback, tcp);
 }
 
@@ -913,8 +938,14 @@ static void route_tcp_to_backend(struct ev_ctx *ctx, struct tcp_session *tcp) {
 static void process_http_request(struct ev_ctx *ctx,
                                  struct http_transaction *http) {
     struct backend *backend = NULL;
-    volatile unsigned int next =
+    volatile int next =
         select_backend(&backend, (const char *) http->tcp_session.stream.buf);
+    // All backends are currently offline
+    // TODO must be handled
+    if (next == LLB_FAILURE) {
+        log_debug("No backends alive at the moment");
+        return;
+    }
     /*
      * Create a connection structure to handle the client context of the
      * backend new communication channel.
@@ -935,6 +966,19 @@ static void process_http_request(struct ev_ctx *ctx,
         close_connection(&http->tcp_session.pipe[BACKEND]);
         return;
     }
+
+    /* Extract method line from the request */
+    size_t mlen = 0, ulen = 0;
+    char method[HTTP_METHOD_MAX_LEN] = {0};
+    mlen = strcspn((const char *) http->tcp_session.stream.buf, "\r\n");
+    snprintf(method, mlen + 1, "%s", http->tcp_session.stream.buf);
+    char *useragent =
+        strstr((const char *) http->tcp_session.stream.buf, "User-Agent:");
+    if (useragent) {
+        ulen = strcspn(useragent, "\r\n");
+        snprintf(method + mlen, ulen + 1, " %s", useragent);
+    }
+    log_debug("Forwarding %s to %s:%i", method, backend->host, backend->port);
 
     backend->active_connections++;
     http->tcp_session.backend_idx = next;
