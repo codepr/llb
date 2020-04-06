@@ -92,7 +92,7 @@ tcp_backlog 128
 ```
 
 Executable accepts some simple arguments, in case of a configuration file
-specified every setting is overridden by a it.
+specified every setting is overridden by it.
 
 - `-h` print an usage help
 - `-v` enable verbose debug messages
