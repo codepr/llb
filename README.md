@@ -90,3 +90,18 @@ tcp_backlog 128
 # TLS supported versions
 #tls_protocols tlsv1,tlsv1_1,tlsv1_2,tlsv1_3
 ```
+
+Executable accepts some simple arguments, in case of a configuration file
+specified every setting is overridden by a it.
+
+- `-h` print an usage help
+- `-v` enable verbose debug messages
+- `-d` run in daemon mode
+- `-c <path/to/conf>` specify a configuration path, defaults to `/etc/llb/llb.conf`
+- `-l <load-balancing-algorithm>` specify a load-balancing algorithm to be
+  used. Choices are `round-robin`, `hash`, `random`, `leastconn`, `leasttraffic`
+  and `weighted-round-robin`
+- `-m <mode>` choose the run mode between `tcp` and `http`. Defaults to `http`
+- `-b <host:port:weight>,<host:port:weight>..` add backend machines with a
+  weight associated, it will be ignored for load-balancing algorithms other
+  than `weighted-round-robin`
