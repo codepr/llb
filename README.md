@@ -30,6 +30,13 @@ Next:
 
 ## Build
 
+** Dependencies
+
+- gcc
+- make
+- cmake
+- OpenSSL (libssl-dev)
+
 ```sh
 $ cmake . && make
 ```
