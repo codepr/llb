@@ -30,7 +30,7 @@ Next:
 
 ## Build
 
-** Dependencies
+**Dependencies**
 
 - gcc
 - make
