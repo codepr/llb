@@ -26,6 +26,7 @@
  */
 
 #include <time.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <assert.h>
@@ -44,8 +45,8 @@ void llb_log_init(const char *file) {
     if (!file) return;
     fh = fopen(file, "a+");
     if (!fh)
-        printf("%lu WARNING: Unable to open file %s\n",
-               (unsigned long) time(NULL), file);
+        printf("%lu WARNING: Unable to open file %s: %s\n",
+               (unsigned long) time(NULL), file, strerror(errno));
 }
 
 /*

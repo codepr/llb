@@ -26,6 +26,7 @@
  */
 
 #include <ctype.h>
+#include <errno.h>
 #include <string.h>
 #include <assert.h>
 #ifdef __linux__
@@ -291,7 +292,8 @@ bool config_load(const char *configpath) {
     FILE *fh = fopen(configpath, "r");
 
     if (!fh) {
-        log_warning("WARNING: Unable to open conf file %s", configpath);
+        log_warning("WARNING: Unable to open conf file %s: %s",
+                    configpath, strerror(errno));
         log_warning("To specify a config file run llb -c /path/to/conf");
         return false;
     }
@@ -350,7 +352,7 @@ void config_set_default(void) {
     // Set default values
     config.version = VERSION;
     config.loglevel = DEFAULT_LOG_LEVEL;
-    memset(config.logpath, 0x00, 0xFFF);
+    strcpy(config.logpath, DEFAULT_LOG_PATH);
     config.frontends_nr = 1;
     config.max_frontends_nr = 2;
     config.backends_nr = 0;

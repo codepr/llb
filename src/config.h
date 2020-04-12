@@ -63,9 +63,10 @@
 
 // Default parameters
 
-#define VERSION                     "0.1.6"
+#define VERSION                     "0.1.7"
 #define DEFAULT_MODE                LLB_HTTP_MODE
 #define DEFAULT_LOG_LEVEL           DEBUG
+#define DEFAULT_LOG_PATH            "/var/log/llb.log"
 #define DEFAULT_CONF_PATH           "/etc/llb/llb.conf"
 #define DEFAULT_HOSTNAME            "127.0.0.1"
 #define DEFAULT_PORT                8789
