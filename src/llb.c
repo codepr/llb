@@ -82,9 +82,6 @@ int main (int argc, char **argv) {
     int debug = 0, daemon = 0;
     int opt;
 
-    // Set default configuration
-    config_set_default();
-
     while ((opt = getopt(argc, argv, "c:b:l:m:vhd:")) != -1) {
         switch (opt) {
             case 'c':
@@ -114,6 +111,9 @@ int main (int argc, char **argv) {
         }
     }
 
+    // Set default configuration
+    config_set_default();
+
     // Override default DEBUG mode
     conf->loglevel = debug == 1 ? DEBUG : WARNING;
 
@@ -124,52 +124,51 @@ int main (int argc, char **argv) {
         if (!backends) {
             print_help(argv[0]);
             exit(EXIT_FAILURE);
+        }
+        char *end_str;
+        char *token = strtok_r((char *) backends, ",", &end_str);
+        if (!token) {
+            PARSE_CONFIG_COMMAS(backends,
+                                &conf->backends[conf->backends_nr],
+                                struct backend);
+            conf->backends[conf->backends_nr].active_connections =
+                ATOMIC_VAR_INIT(0);
         } else {
-            char *end_str;
-            char *token = strtok_r((char *) backends, ",", &end_str);
-            if (!token) {
-                PARSE_CONFIG_COMMAS(backends,
-                                    &conf->backends[conf->backends_nr],
+            do {
+                if (conf->backends_nr >= conf->max_backends_nr) {
+                    conf->max_backends_nr *= 2;
+                    conf->backends =
+                        llb_realloc(conf->backends,
+                                    conf->max_backends_nr * sizeof(struct backend));
+                }
+                PARSE_CONFIG_COMMAS(token,
+                                    &conf->backends[conf->backends_nr++],
                                     struct backend);
-                conf->backends[conf->backends_nr].active_connections =
+                conf->backends[conf->backends_nr-1].active_connections =
                     ATOMIC_VAR_INIT(0);
-            } else {
-                do {
-                    if (conf->backends_nr >= conf->max_backends_nr) {
-                        conf->max_backends_nr *= 2;
-                        conf->backends =
-                            llb_realloc(conf->backends,
-                                        conf->max_backends_nr * sizeof(struct backend));
-                    }
-                    PARSE_CONFIG_COMMAS(token,
-                                        &conf->backends[conf->backends_nr++],
-                                        struct backend);
-                    conf->backends[conf->backends_nr-1].active_connections =
-                        ATOMIC_VAR_INIT(0);
-                } while ((token = strtok_r(NULL, ",", &end_str)));
-            }
-            /*
-             * If load-balancing is specifyed set it, disk config has precedence
-             * anyway on this
-             */
-            if (load_balancing) {
-                if (STREQ("round-robin", load_balancing, 11)
-                    || STREQ("roundrobin", load_balancing, 10))
-                    conf->load_balancing = ROUND_ROBIN;
-                else if (STREQ("hash", load_balancing, 4))
-                    conf->load_balancing = HASH_BALANCING;
-                else if (STREQ("random", load_balancing, 6))
-                    conf->load_balancing = RANDOM_BALANCING;
-                else if (STREQ("leastconn", load_balancing, 9))
-                    conf->load_balancing = LEASTCONN;
-                else if (STREQ("leasttraffic", load_balancing, 12))
-                    conf->load_balancing = LEASTTRAFFIC;
-                else if (STREQ("weighted-round-robin", load_balancing, 20))
-                    conf->load_balancing = WEIGHTED_ROUND_ROBIN;
-                else
-                    log_warning("WARNING: Unsupported load-balancing algorithm, "
-                                "fallbacking to round-robin");
-            }
+            } while ((token = strtok_r(NULL, ",", &end_str)));
+        }
+        /*
+         * If load-balancing is specifyed set it, disk config has precedence
+         * anyway on this
+         */
+        if (load_balancing) {
+            if (STREQ("round-robin", load_balancing, 11)
+                || STREQ("roundrobin", load_balancing, 10))
+                conf->load_balancing = ROUND_ROBIN;
+            else if (STREQ("hash", load_balancing, 4))
+                conf->load_balancing = HASH_BALANCING;
+            else if (STREQ("random", load_balancing, 6))
+                conf->load_balancing = RANDOM_BALANCING;
+            else if (STREQ("leastconn", load_balancing, 9))
+                conf->load_balancing = LEASTCONN;
+            else if (STREQ("leasttraffic", load_balancing, 12))
+                conf->load_balancing = LEASTTRAFFIC;
+            else if (STREQ("weighted-round-robin", load_balancing, 20))
+                conf->load_balancing = WEIGHTED_ROUND_ROBIN;
+            else
+                log_warning("WARNING: Unsupported load-balancing algorithm, "
+                            "fallbacking to round-robin");
         }
     }
 
