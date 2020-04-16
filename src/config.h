@@ -136,7 +136,6 @@ struct config {
 
 extern struct config *conf;
 
-int parse_int(const char *);
 void config_set_default(void);
 void config_print(void);
 bool config_load(const char *);

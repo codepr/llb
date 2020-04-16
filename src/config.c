@@ -98,7 +98,7 @@ static long get_fh_soft_limit(void) {
 
 /* Parse the integer part of a string, by effectively iterate through it and
    converting the numbers found */
-int parse_int(const char *string) {
+static int parse_int(const char *string) {
     int n = 0;
 
     while (*string && isdigit(*string)) {
