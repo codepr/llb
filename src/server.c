@@ -57,7 +57,7 @@ static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 struct listen_payload {
     int *fds;
     int frontends_nr;
-    bool cronjobs;
+    atomic_bool cronjobs;
 };
 
 /*
@@ -1166,7 +1166,7 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
     struct listen_payload loop_start = {
         .fds = llb_calloc(frontends_nr, sizeof(struct frontend)),
         .frontends_nr = frontends_nr,
-        .cronjobs = false
+        .cronjobs = ATOMIC_VAR_INIT(false)
     };
 
     /* Start frontend endpoints listening for new connections */
@@ -1177,7 +1177,6 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
     pthread_t thrs[THREADSNR];
     for (int i = 0; i < THREADSNR; ++i) {
         pthread_create(&thrs[i], NULL, (void * (*) (void *)) &eventloop_start, &loop_start);
-        usleep(1500);
     }
 #endif
     loop_start.cronjobs = true;
