@@ -912,8 +912,9 @@ static void route_tcp_to_backend(struct ev_ctx *ctx, struct tcp_session *tcp) {
         return;
     }
 
-    log_debug("Forwarding TCP connection to %s:%i",
-              backend->host, backend->port);
+    log_debug("Forwarding TCP connection to %s:%i (%i %lu)",
+              backend->host, backend->port, backend->active_connections,
+              backend->bytecount);
 
     backend->active_connections++;
     tcp->status = WAITING_REQUEST;
@@ -978,7 +979,9 @@ static void process_http_request(struct ev_ctx *ctx,
         ulen = strcspn(useragent, "\r\n");
         snprintf(method + mlen, ulen + 1, " %s", useragent);
     }
-    log_debug("Forwarding %s to %s:%i", method, backend->host, backend->port);
+    log_debug("%s %lu %s:%i (%i %lu)", method, http->tcp_session.stream.size,
+              backend->host, backend->port, backend->active_connections,
+              backend->bytecount);
 
     backend->active_connections++;
     http->tcp_session.backend_idx = next;
