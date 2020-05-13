@@ -52,7 +52,7 @@
 
 static inline void *llb_malloc(size_t size) {
     void *ptr = malloc(size);
-    if (!ptr) {
+    if (!ptr && size != 0) {
         fprintf(stderr, "[%s:%ul] Out of memory (%lu bytes)\n",
                 __FILE__, __LINE__, size);
         exit(EXIT_FAILURE);
@@ -62,7 +62,7 @@ static inline void *llb_malloc(size_t size) {
 
 static inline void *llb_calloc(size_t n, size_t size) {
     void *ptr = calloc(n, size);
-    if (!ptr) {
+    if (!ptr && size != 0 && n != 0) {
         fprintf(stderr, "[%s:%ul] Out of memory (%lu bytes)\n",
                 __FILE__, __LINE__, size);
         exit(EXIT_FAILURE);
@@ -73,7 +73,7 @@ static inline void *llb_calloc(size_t n, size_t size) {
 static inline void *llb_realloc(void *ptr, size_t size) {
     assert(ptr && size > 0);
     void *new_ptr = realloc(ptr, size);
-    if (!new_ptr) {
+    if (!new_ptr && size != 0) {
         fprintf(stderr, "[%s:%ul] Out of memory (%lu bytes)\n",
                 __FILE__, __LINE__, size);
         exit(EXIT_FAILURE);
