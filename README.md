@@ -8,7 +8,7 @@ Supports Linux (and arguably OSX) through epoll and poll/select (kqueue on
 BSD-like) as fallback, it uses an event-loop library borrowed from
 [Sol](https://github.com/codepr/sol.git).
 
-Written out of boredom/learning pupose (50/50) during self-isolation. Sure
+Written out of boredom/learning purpose (50/50) during self-isolation. Sure
 thing there will be bugs and plenty of corner cases to be addressed.
 
 Features:
