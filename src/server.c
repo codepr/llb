@@ -25,19 +25,21 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "server.h"
+#include "config.h"
+#include "ev.h"
+#include "llb_internal.h"
+#include "log.h"
+#include "memorypool.h"
+#include "network.h"
+#include <errno.h>
 #include <fcntl.h>
 #include <float.h>
-#include <errno.h>
-#include <string.h>
 #include <pthread.h>
+#include <stdio.h>
+#include <string.h>
 #include <sys/time.h>
-#include "ev.h"
-#include "log.h"
-#include "config.h"
-#include "server.h"
-#include "network.h"
-#include "memorypool.h"
-#include "llb_internal.h"
+#include <unistd.h>
 
 #define HTTP_HEADER_CRLF "\r\n\r\n"
 
@@ -182,22 +184,24 @@ static inline void http_parse_content_length(struct http_transaction *);
 
 static inline int http_header_length(const struct http_transaction *);
 
-#define CHUNKED_COMPLETE(tcp) \
-    strcmp((char *) (tcp)->stream.buf + (tcp)->stream.size - 5, "0\r\n\r\n") == 0
+#define CHUNKED_COMPLETE(tcp)                                                  \
+    strcmp((char *)(tcp)->stream.buf + (tcp)->stream.size - 5, "0\r\n\r\n") == 0
 
-#define PROCESS_HTTP_STREAM(http) do {                                \
-    if ((http)->tcp_session.status == WAITING_REQUEST) {              \
-        process_http_request((http)->tcp_session.ctx, (http));        \
-    } else if ((http)->tcp_session.status == WAITING_RESPONSE) {      \
-        server.backends[(http)->tcp_session.backend_idx].bytecount += \
-            (http)->tcp_session.stream.size;                          \
-        process_http_response((http)->tcp_session.ctx, (http));       \
-    }                                                                 \
-} while (0);
+#define PROCESS_HTTP_STREAM(http)                                              \
+    do {                                                                       \
+        if ((http)->tcp_session.status == WAITING_REQUEST) {                   \
+            process_http_request((http)->tcp_session.ctx, (http));             \
+        } else if ((http)->tcp_session.status == WAITING_RESPONSE) {           \
+            server.backends[(http)->tcp_session.backend_idx].bytecount +=      \
+                (http)->tcp_session.stream.size;                               \
+            process_http_response((http)->tcp_session.ctx, (http));            \
+        }                                                                      \
+    } while (0);
 
 /* Parse header length by scanning all chars till the double CRLF */
-static inline int http_header_length(const struct http_transaction *http) {
-    char *ptr = (char *) http->tcp_session.stream.buf;
+static inline int http_header_length(const struct http_transaction *http)
+{
+    char *ptr = (char *)http->tcp_session.stream.buf;
     int count = 0;
     while (*ptr) {
         if (STREQ(ptr, HTTP_HEADER_CRLF, 4))
@@ -208,11 +212,12 @@ static inline int http_header_length(const struct http_transaction *http) {
     return LLB_FAILURE;
 }
 
-static inline void http_parse_content_length(struct http_transaction *http) {
+static inline void http_parse_content_length(struct http_transaction *http)
+{
     // XXX hack
     int header_length = http_header_length(http);
     const char *content_length =
-        strstr((const char *) http->tcp_session.stream.buf, "Content-Length");
+        strstr((const char *)http->tcp_session.stream.buf, "Content-Length");
     char line[64];
     snprintf(line, 64, "%s", content_length);
     char *token = strtok(line, ":");
@@ -222,11 +227,12 @@ static inline void http_parse_content_length(struct http_transaction *http) {
 }
 
 // XXX Eyesore
-static inline void http_parse_header(struct http_transaction *http) {
+static inline void http_parse_header(struct http_transaction *http)
+{
     const char *encoding =
-        strstr((const char *) http->tcp_session.stream.buf, "Transfer-Encoding");
+        strstr((const char *)http->tcp_session.stream.buf, "Transfer-Encoding");
     if (encoding) {
-        if (strstr((const char *) http->tcp_session.stream.buf, "chunked"))
+        if (strstr((const char *)http->tcp_session.stream.buf, "chunked"))
             http->encoding = CHUNKED;
         else
             http->encoding = GENERIC;
@@ -237,16 +243,17 @@ static inline void http_parse_header(struct http_transaction *http) {
 }
 
 /* Simple error_code to string function, to be refined */
-static const char *llberr(int rc) {
+static const char *llberr(int rc)
+{
     switch (rc) {
-        case -ERRCLIENTDC:
-            return "Client disconnected";
-        case -ERRSOCKETERR:
-            return strerror(errno);
-        case -ERREAGAIN:
-            return "Socket FD EAGAIN";
-        default:
-            return "Unknown error";
+    case -ERRCLIENTDC:
+        return "Client disconnected";
+    case -ERRSOCKETERR:
+        return strerror(errno);
+    case -ERREAGAIN:
+        return "Socket FD EAGAIN";
+    default:
+        return "Unknown error";
     }
 }
 
@@ -261,9 +268,10 @@ static const char *llberr(int rc) {
  * a connection go well to the target backend, we flag it alive, otherwise it's
  * flagged dead
  */
-static void backends_healthcheck(struct ev_ctx *ctx, void *data) {
-    (void) ctx;
-    (void) data;
+static void backends_healthcheck(struct ev_ctx *ctx, void *data)
+{
+    (void)ctx;
+    (void)data;
     int fd = 0;
     for (int i = 0; i < conf->backends_nr; ++i) {
 #if THREADSNR > 0
@@ -280,8 +288,8 @@ static void backends_healthcheck(struct ev_ctx *ctx, void *data) {
         } else {
             if (server.backends[i].alive == false) {
                 gettimeofday(&server.backends[i].start, NULL);
-                log_debug("Backend %s:%i back online",
-                          server.backends[i].host, server.backends[i].port);
+                log_debug("Backend %s:%i back online", server.backends[i].host,
+                          server.backends[i].port);
             }
             server.backends[i].alive = true;
             close(fd);
@@ -301,11 +309,12 @@ static void backends_healthcheck(struct ev_ctx *ctx, void *data) {
  * previous used connections, e.g. after a re-use of an already employed
  * connection
  */
-static void tcp_session_init(struct tcp_session *tcp) {
-    tcp->status = WAITING_REQUEST;
-    tcp->stream.size = 0;
-    tcp->stream.toread = 0;
-    tcp->stream.towrite = 0;
+static void tcp_session_init(struct tcp_session *tcp)
+{
+    tcp->status          = WAITING_REQUEST;
+    tcp->stream.size     = 0;
+    tcp->stream.toread   = 0;
+    tcp->stream.towrite  = 0;
     tcp->stream.capacity = MAX_STREAM_BUF_SIZE;
     if (!tcp->stream.buf)
         tcp->stream.buf =
@@ -317,11 +326,12 @@ static void tcp_session_init(struct tcp_session *tcp) {
  * each time a new client connects, we just "deactivate" the session and return
  * it to the server memory pool
  */
-static void tcp_session_close(struct tcp_session *tcp) {
-    tcp->stream.size = 0;
-    tcp->stream.toread = 0;
+static void tcp_session_close(struct tcp_session *tcp)
+{
+    tcp->stream.size    = 0;
+    tcp->stream.toread  = 0;
     tcp->stream.towrite = 0;
-    tcp->status = WAITING_REQUEST;
+    tcp->status         = WAITING_REQUEST;
     ev_del_fd(tcp->ctx, tcp->pipe[CLIENT].fd);
     ev_del_fd(tcp->ctx, tcp->pipe[BACKEND].fd);
     close_connection(&tcp->pipe[CLIENT]);
@@ -340,11 +350,12 @@ static void tcp_session_close(struct tcp_session *tcp) {
 }
 
 /*
- * All transactions are pre-allocated at the start of the server, but their buffer
- * (read and write) is not, they're lazily allocated with this function, meant
- * to be called on the accept callback
+ * All transactions are pre-allocated at the start of the server, but their
+ * buffer (read and write) is not, they're lazily allocated with this function,
+ * meant to be called on the accept callback
  */
-static void http_transaction_init(struct http_transaction *http) {
+static void http_transaction_init(struct http_transaction *http)
+{
     http->encoding = UNSET;
     tcp_session_init(&http->tcp_session);
 }
@@ -355,7 +366,8 @@ static void http_transaction_init(struct http_transaction *http) {
  * according to its state (e.g. if it's a clean_session connected client or
  * not) and we allow the http memory pool to reclaim it
  */
-static void http_transaction_close(struct http_transaction *http) {
+static void http_transaction_close(struct http_transaction *http)
+{
     http->encoding = UNSET;
     tcp_session_close(&http->tcp_session);
 #if THREADSNR > 0
@@ -380,7 +392,8 @@ static void http_transaction_close(struct http_transaction *http) {
  *         of TLS communication. Also it store the reading buffer to be used for
  *         incoming byte-streams.
  */
-static inline int tcp_session_read(struct tcp_session *tcp) {
+static inline int tcp_session_read(struct tcp_session *tcp)
+{
 
     ssize_t nread = 0;
 
@@ -402,8 +415,8 @@ static inline int tcp_session_read(struct tcp_session *tcp) {
     tcp->stream.toread =
         tcp->stream.toread == 0 ? 0 : tcp->stream.toread - nread;
 
-    if ((conf->mode == LLB_HTTP_MODE || tcp->stream.toread > 0)
-        && (errno == EAGAIN || errno == EWOULDBLOCK))
+    if ((conf->mode == LLB_HTTP_MODE || tcp->stream.toread > 0) &&
+        (errno == EAGAIN || errno == EWOULDBLOCK))
         return -ERREAGAIN;
 
     return LLB_SUCCESS;
@@ -415,7 +428,8 @@ static inline int tcp_session_read(struct tcp_session *tcp) {
  * EAGAIN (socket descriptor must be in non-blocking mode) error is raised,
  * meaning we cannot write anymore for the current cycle.
  */
-static inline int tcp_session_write(struct tcp_session *tcp) {
+static inline int tcp_session_write(struct tcp_session *tcp)
+{
 
     ssize_t wrote = 0;
 
@@ -451,8 +465,9 @@ clientdc:
  * and link it to the fd, ready to be set in EV_READ event, then schedule a
  * call to the read_callback to handle incoming streams of bytes
  */
-static void accept_callback(struct ev_ctx *ctx, void *data) {
-    int serverfd = *((int *) data);
+static void accept_callback(struct ev_ctx *ctx, void *data)
+{
+    int serverfd = *((int *)data);
     while (1) {
 
         /*
@@ -488,7 +503,7 @@ static void accept_callback(struct ev_ctx *ctx, void *data) {
 
             /* Add it to the epoll loop */
             ev_register_event(ctx, fd, EV_READ, http_read_callback, http);
-        } else  {
+        } else {
 #if THREADSNR > 0
             pthread_mutex_lock(&mutex);
 #endif
@@ -516,40 +531,40 @@ static void accept_callback(struct ev_ctx *ctx, void *data) {
  * will happen only if the client decide to close the connection or a socket
  * error occurs.
  */
-static void tcp_write_callback(struct ev_ctx *ctx, void *arg) {
-    (void) ctx;
+static void tcp_write_callback(struct ev_ctx *ctx, void *arg)
+{
+    (void)ctx;
     struct tcp_session *tcp = arg;
-    int err = tcp_session_write(tcp);
+    int err                 = tcp_session_write(tcp);
     switch (err) {
-        case LLB_SUCCESS: // OK
-            /*
-             * Rearm descriptor making it ready to receive input,
-             * read_callback will be the callback to be used; also reset the
-             * read buffer status for the client.
-             */
-            // reset the pointer to the beginning of the buffer
-            tcp->stream.size = 0;
-            if (tcp->status == FORWARDING_REQUEST) {
-                server.backends[tcp->backend_idx].bytecount +=
-                    tcp->stream.size;
-                tcp->status = WAITING_RESPONSE;
-            } else if (tcp->status == FORWARDING_RESPONSE) {
-                tcp->status = WAITING_REQUEST;
-            }
-            enqueue_tcp_read(tcp);
-            break;
-        case -ERREAGAIN:
-            /*
-             * We haven't written all bytes we expected in the last write call
-             * just enqueue another write call for the next loop cycle,
-             * hopefully the kernel will be ready to write out the remaining
-             * bunch of data.
-             */
-            enqueue_tcp_write(tcp);
-            break;
-        default:
-            tcp_session_close(tcp);
-            break;
+    case LLB_SUCCESS: // OK
+        /*
+         * Rearm descriptor making it ready to receive input,
+         * read_callback will be the callback to be used; also reset the
+         * read buffer status for the client.
+         */
+        // reset the pointer to the beginning of the buffer
+        tcp->stream.size = 0;
+        if (tcp->status == FORWARDING_REQUEST) {
+            server.backends[tcp->backend_idx].bytecount += tcp->stream.size;
+            tcp->status = WAITING_RESPONSE;
+        } else if (tcp->status == FORWARDING_RESPONSE) {
+            tcp->status = WAITING_REQUEST;
+        }
+        enqueue_tcp_read(tcp);
+        break;
+    case -ERREAGAIN:
+        /*
+         * We haven't written all bytes we expected in the last write call
+         * just enqueue another write call for the next loop cycle,
+         * hopefully the kernel will be ready to write out the remaining
+         * bunch of data.
+         */
+        enqueue_tcp_write(tcp);
+        break;
+    default:
+        tcp_session_close(tcp);
+        break;
     }
 }
 
@@ -562,34 +577,35 @@ static void tcp_write_callback(struct ev_ctx *ctx, void *arg) {
  * transaction is in FORWARDING_RESPONSE state (we alredy received the response
  * from the backend) we can just terminate the transaction after.
  */
-static void http_write_callback(struct ev_ctx *ctx, void *arg) {
-    (void) ctx;
+static void http_write_callback(struct ev_ctx *ctx, void *arg)
+{
+    (void)ctx;
     struct http_transaction *http = arg;
-    int err = tcp_session_write(&http->tcp_session);
+    int err                       = tcp_session_write(&http->tcp_session);
     switch (err) {
-        case LLB_SUCCESS: // OK
-            /*
-             * Rearm descriptor making it ready to receive input,
-             * read_callback will be the callback to be used; also reset the
-             * read buffer status for the client.
-             */
-            if (http->tcp_session.status == FORWARDING_REQUEST) {
-                http->tcp_session.status = WAITING_RESPONSE;
-                server.backends[http->tcp_session.backend_idx].bytecount +=
-                    http->tcp_session.stream.size;
-                // reset the pointer to the beginning of the buffer
-                http->tcp_session.stream.size = 0;
-                enqueue_http_read(http);
-            } else if (http->tcp_session.status == FORWARDING_RESPONSE) {
-                http_transaction_close(http);
-            }
-            break;
-        case -ERREAGAIN:
-            enqueue_http_write(http);
-            break;
-        default:
+    case LLB_SUCCESS: // OK
+        /*
+         * Rearm descriptor making it ready to receive input,
+         * read_callback will be the callback to be used; also reset the
+         * read buffer status for the client.
+         */
+        if (http->tcp_session.status == FORWARDING_REQUEST) {
+            http->tcp_session.status = WAITING_RESPONSE;
+            server.backends[http->tcp_session.backend_idx].bytecount +=
+                http->tcp_session.stream.size;
+            // reset the pointer to the beginning of the buffer
+            http->tcp_session.stream.size = 0;
+            enqueue_http_read(http);
+        } else if (http->tcp_session.status == FORWARDING_RESPONSE) {
             http_transaction_close(http);
-            break;
+        }
+        break;
+    case -ERREAGAIN:
+        enqueue_http_write(http);
+        break;
+    default:
+        http_transaction_close(http);
+        break;
     }
 }
 
@@ -602,58 +618,58 @@ static void http_write_callback(struct ev_ctx *ctx, void *arg) {
  * expect any termination of the communication except for connection closed by
  * the client or dropped by a socket error
  */
-static void tcp_read_callback(struct ev_ctx *ctx, void *data) {
-    (void) ctx;
+static void tcp_read_callback(struct ev_ctx *ctx, void *data)
+{
+    (void)ctx;
     struct tcp_session *tcp = data;
     /*
      * Received a bunch of data from a client,  we need to read the bytes and
      * encoding the content according to the protocol
      */
-    int rc = tcp_session_read(tcp);
+    int rc                  = tcp_session_read(tcp);
     switch (rc) {
-        case LLB_SUCCESS:
-            /*
-             * All is ok, process the incoming request/response based on the
-             * state of the transaction, in fact we need to forward the request
-             * to a backend if in WAITING_RESPONSE state or we need to forward
-             * the response back to the requesting client otherwise
-             * (WAITING_RESPONSE state)
-             */
-            tcp->stream.towrite = tcp->stream.size;
-            switch (tcp->status) {
-                case WAITING_REQUEST:
-                    tcp->status = FORWARDING_REQUEST;
-                    break;
-                case WAITING_RESPONSE:
-                    server.backends[tcp->backend_idx].bytecount +=
-                        tcp->stream.size;
-                    tcp->status = FORWARDING_RESPONSE;
-                    break;
-            }
-            enqueue_tcp_write(tcp);
+    case LLB_SUCCESS:
+        /*
+         * All is ok, process the incoming request/response based on the
+         * state of the transaction, in fact we need to forward the request
+         * to a backend if in WAITING_RESPONSE state or we need to forward
+         * the response back to the requesting client otherwise
+         * (WAITING_RESPONSE state)
+         */
+        tcp->stream.towrite = tcp->stream.size;
+        switch (tcp->status) {
+        case WAITING_REQUEST:
+            tcp->status = FORWARDING_REQUEST;
             break;
-        case -ERRCLIENTDC:
-        case -ERRSOCKETERR:
-            /*
-             * We got an unexpected error or a disconnection from the
-             * client side, close the connection and free the resources
-             */
-            log_error("Closing connection with %s -> %s: %s",
-                      tcp->pipe[CLIENT].ip, tcp->pipe[BACKEND].ip, llberr(rc));
-            tcp_session_close(tcp);
+        case WAITING_RESPONSE:
+            server.backends[tcp->backend_idx].bytecount += tcp->stream.size;
+            tcp->status = FORWARDING_RESPONSE;
             break;
-        case -ERREAGAIN:
-            /*
-             * We read all we could from the last read call, it's not certain
-             * that all data is read, especially in chunked mode, so we proceed
-             * processing the payload only when we're sure we finished reading.
-             *
-             * To make sure we read all incoming data we just re-schedule a new
-             * read on the next loop cycle, hoefully the kernel buffer will be
-             * read-ready again and we would complete our reception.
-             */
-            enqueue_tcp_read(tcp);
-            break;
+        }
+        enqueue_tcp_write(tcp);
+        break;
+    case -ERRCLIENTDC:
+    case -ERRSOCKETERR:
+        /*
+         * We got an unexpected error or a disconnection from the
+         * client side, close the connection and free the resources
+         */
+        log_error("Closing connection with %s -> %s: %s", tcp->pipe[CLIENT].ip,
+                  tcp->pipe[BACKEND].ip, llberr(rc));
+        tcp_session_close(tcp);
+        break;
+    case -ERREAGAIN:
+        /*
+         * We read all we could from the last read call, it's not certain
+         * that all data is read, especially in chunked mode, so we proceed
+         * processing the payload only when we're sure we finished reading.
+         *
+         * To make sure we read all incoming data we just re-schedule a new
+         * read on the next loop cycle, hoefully the kernel buffer will be
+         * read-ready again and we would complete our reception.
+         */
+        enqueue_tcp_read(tcp);
+        break;
     }
 }
 
@@ -666,60 +682,61 @@ static void tcp_read_callback(struct ev_ctx *ctx, void *data) {
  * the client and the backend, shortly after a reply the communication will be
  * closed.
  */
-static void http_read_callback(struct ev_ctx *ctx, void *data) {
-    (void) ctx;
-    struct http_transaction *http = data;
+static void http_read_callback(struct ev_ctx *ctx, void *data)
+{
+    (void)ctx;
+    struct http_transaction *http    = data;
     /*
      * Received a bunch of data from a client,  we need to read the bytes and
      * encoding the content according to the protocol
      */
-    int rc = tcp_session_read(&http->tcp_session);
+    int rc                           = tcp_session_read(&http->tcp_session);
     http->tcp_session.stream.towrite = http->tcp_session.stream.size;
     switch (rc) {
-        case LLB_SUCCESS:
-            /*
-             * All is ok, process the incoming request/response based on the
-             * state of the transaction, in fact we need to forward the request
-             * to a backend if in WAITING_RESPONSE state or we need to forward
-             * the response back to the requesting client otherwise
-             * (WAITING_RESPONSE state)
-             */
+    case LLB_SUCCESS:
+        /*
+         * All is ok, process the incoming request/response based on the
+         * state of the transaction, in fact we need to forward the request
+         * to a backend if in WAITING_RESPONSE state or we need to forward
+         * the response back to the requesting client otherwise
+         * (WAITING_RESPONSE state)
+         */
+        PROCESS_HTTP_STREAM(http);
+        break;
+    case -ERRCLIENTDC:
+    case -ERRSOCKETERR:
+        /*
+         * We got an unexpected error or a disconnection from the
+         * client side, close the connection and free the resources
+         */
+        log_error("Closing connection with %s -> %s: %s",
+                  http->tcp_session.pipe[CLIENT].ip,
+                  http->tcp_session.pipe[BACKEND].ip, llberr(rc));
+        http_transaction_close(http);
+        break;
+    case -ERREAGAIN:
+        // TODO, check for content-length in case of non-chunked mode
+        /*
+         * We read all we could from the last read call, it's not certain
+         * that all data is read, especially in chunked mode, so we proceed
+         * processing the payload only when we're sure we finished reading
+         * which happens in two cases:
+         * - chunked response: the last chunk ends with a 0 length mini-header
+         *   followed by 2 CRLF like "0\r\n\r\n"
+         * - non-chunked response: a content-length header should be present
+         *   stating the expected length of the transmission
+         */
+        if (http->encoding == UNSET)
+            http_parse_header(http);
+        if (http->encoding != CHUNKED) {
             PROCESS_HTTP_STREAM(http);
-            break;
-        case -ERRCLIENTDC:
-        case -ERRSOCKETERR:
-            /*
-             * We got an unexpected error or a disconnection from the
-             * client side, close the connection and free the resources
-             */
-            log_error("Closing connection with %s -> %s: %s",
-                      http->tcp_session.pipe[CLIENT].ip,
-                      http->tcp_session.pipe[BACKEND].ip, llberr(rc));
-            http_transaction_close(http);
-            break;
-        case -ERREAGAIN:
-            // TODO, check for content-length in case of non-chunked mode
-            /*
-             * We read all we could from the last read call, it's not certain
-             * that all data is read, especially in chunked mode, so we proceed
-             * processing the payload only when we're sure we finished reading
-             * which happens in two cases:
-             * - chunked response: the last chunk ends with a 0 length mini-header
-             *   followed by 2 CRLF like "0\r\n\r\n"
-             * - non-chunked response: a content-length header should be present
-             *   stating the expected length of the transmission
-             */
-            if (http->encoding == UNSET)
-                http_parse_header(http);
-            if (http->encoding != CHUNKED) {
-                PROCESS_HTTP_STREAM(http);
-            } else {
-                if (CHUNKED_COMPLETE(&http->tcp_session))
-                    PROCESS_HTTP_STREAM(http)
-                else
-                    enqueue_http_read(http);
-            }
-            break;
+        } else {
+            if (CHUNKED_COMPLETE(&http->tcp_session))
+                PROCESS_HTTP_STREAM(http)
+            else
+                enqueue_http_read(http);
+        }
+        break;
     }
 }
 
@@ -734,7 +751,8 @@ static void http_read_callback(struct ev_ctx *ctx, void *data) {
  * - Leastconn
  * - Weighted round robin
  */
-static int select_backend(struct backend **backend_ptr, const char *buf) {
+static int select_backend(struct backend **backend_ptr, const char *buf)
+{
     // Check for at least one backend online
     bool ok = false;
     for (int i = 0; i < conf->backends_nr && !ok; ++i)
@@ -743,150 +761,149 @@ static int select_backend(struct backend **backend_ptr, const char *buf) {
     // No backends onlne, return an error
     if (!ok)
         return LLB_FAILURE;
-    struct backend *backend = NULL;
+    struct backend *backend   = NULL;
     volatile atomic_uint next = ATOMIC_VAR_INIT(0);
-    char *ptr = NULL;
+    char *ptr                 = NULL;
     switch (conf->load_balancing) {
-        case ROUND_ROBIN:
+    case ROUND_ROBIN:
+        /*
+         * 1. ROUND ROBIN balancing, just modulo the total number of
+         * backends to obtain the index of the backend, iterate over and
+         * over in case of dead endpoints
+         */
+        while (!backend || backend->alive == false) {
+            next    = server.current_backend++ % conf->backends_nr;
+            backend = &server.backends[next];
+        }
+        break;
+    case HASH_BALANCING:
+        /*
+         * 2. HASH BALANCING, uses a hash function to obtain a value from
+         * the entire request and modulo the total number of the backends
+         * to select a backend. Try hashing different parts of the request
+         * in case of dead endpoints selected
+         */
+        ptr = (char *)buf;
+        while (!backend || backend->alive == false) {
+            // FIXME dumb heuristic
+            next    = djb_hash(ptr + next) % conf->backends_nr;
+            backend = &server.backends[next];
+        }
+        break;
+    case RANDOM_BALANCING:
+        /*
+         * 3. RANDOM BALANCING, just distribute the traffic in random
+         * manner between all alive backends, it's the dumbest heuristic,
+         * can work as well as the ROUND ROBIN one when all the backends
+         * servers have similar specs
+         */
+        while (!backend || backend->alive == false) {
+            next    = RANDOM(0, conf->backends_nr);
+            backend = &server.backends[next];
+        }
+        break;
+    case LEASTCONN:
+        /*
+         * 4. LEASTCONN, iterate through all backends and choose the one
+         * with lower active connections. Not very useful when the majority
+         * of the traffic consists of short-lived connections, still makes
+         * sense for future TCP improvements of the load-balancer
+         */
+        while (!backend || backend->alive == false) {
+            int min = INT_MAX, curr_min = INT_MAX;
             /*
-             * 1. ROUND ROBIN balancing, just modulo the total number of
-             * backends to obtain the index of the backend, iterate over and
-             * over in case of dead endpoints
+             * We just iterate linearly through the entire backends array
+             * as the number of backends shouldn't grow that large to
+             * justify an efficient data-structure to sort out the backends
+             * based on active connections
              */
-            while (!backend || backend->alive == false) {
-                next = server.current_backend++ % conf->backends_nr;
-                backend = &server.backends[next];
-            }
-            break;
-        case HASH_BALANCING:
-            /*
-             * 2. HASH BALANCING, uses a hash function to obtain a value from
-             * the entire request and modulo the total number of the backends
-             * to select a backend. Try hashing different parts of the request
-             * in case of dead endpoints selected
-             */
-            ptr = (char *) buf;
-            while (!backend || backend->alive == false) {
-                // FIXME dumb heuristic
-                next = djb_hash(ptr + next) % conf->backends_nr;
-                backend = &server.backends[next];
-            }
-            break;
-        case RANDOM_BALANCING:
-            /*
-             * 3. RANDOM BALANCING, just distribute the traffic in random
-             * manner between all alive backends, it's the dumbest heuristic,
-             * can work as well as the ROUND ROBIN one when all the backends
-             * servers have similar specs
-             */
-            while (!backend || backend->alive == false) {
-                next = RANDOM(0, conf->backends_nr);
-                backend = &server.backends[next];
-            }
-            break;
-        case LEASTCONN:
-            /*
-             * 4. LEASTCONN, iterate through all backends and choose the one
-             * with lower active connections. Not very useful when the majority
-             * of the traffic consists of short-lived connections, still makes
-             * sense for future TCP improvements of the load-balancer
-             */
-            while (!backend || backend->alive == false) {
-                int min = INT_MAX, curr_min = INT_MAX;
-                /*
-                 * We just iterate linearly through the entire backends array
-                 * as the number of backends shouldn't grow that large to
-                 * justify an efficient data-structure to sort out the backends
-                 * based on active connections
-                 */
-                for (int i = 0; i < conf->backends_nr; ++i) {
-                    if (min > curr_min) {
-                        min = curr_min;
-                        next = i;
-                    }
-                    if (curr_min > server.backends[i].active_connections)
-                        curr_min = server.backends[i].active_connections;
+            for (int i = 0; i < conf->backends_nr; ++i) {
+                if (min > curr_min) {
+                    min  = curr_min;
+                    next = i;
                 }
-                backend = &server.backends[next];
+                if (curr_min > server.backends[i].active_connections)
+                    curr_min = server.backends[i].active_connections;
             }
-            break;
-        case LEASTTRAFFIC:
-            /*
-             * 5. LEASTTRAFFIC, iterate through all backends and choose the one
-             * with the lower traffic, simply obtained by dividing the bytes
-             * count for the number of milliseconds the server has been active
-             */
-            while (!backend || backend->alive == false) {
-                struct timeval tv;
-                double diff = 0.0, curr_min = DBL_MAX, min = DBL_MAX;
-                unsigned long long ms = 0LL, now = 0LL;
-                gettimeofday(&tv, NULL);
-                now = (unsigned long long ) tv.tv_sec * 1000 + \
-                      (unsigned long long) tv.tv_usec / 1000;
-                for (int i = 0; i < conf->backends_nr; ++i) {
-                    ms = (unsigned long long ) \
-                         server.backends[i].start.tv_sec * 1000 +
-                         (unsigned long long)
-                         server.backends[i].start.tv_usec / 1000;
-                    // TODO check for 0 division
-                    diff = (server.backends[i].bytecount * 1000) / (now - ms);
-                    if (curr_min > diff)
-                        curr_min = diff;
-                    if (min > curr_min) {
-                        min = curr_min;
-                        next = i;
-                    }
+            backend = &server.backends[next];
+        }
+        break;
+    case LEASTTRAFFIC:
+        /*
+         * 5. LEASTTRAFFIC, iterate through all backends and choose the one
+         * with the lower traffic, simply obtained by dividing the bytes
+         * count for the number of milliseconds the server has been active
+         */
+        while (!backend || backend->alive == false) {
+            struct timeval tv;
+            double diff = 0.0, curr_min = DBL_MAX, min = DBL_MAX;
+            unsigned long long ms = 0LL, now = 0LL;
+            gettimeofday(&tv, NULL);
+            now = (unsigned long long)tv.tv_sec * 1000 +
+                  (unsigned long long)tv.tv_usec / 1000;
+            for (int i = 0; i < conf->backends_nr; ++i) {
+                ms =
+                    (unsigned long long)server.backends[i].start.tv_sec * 1000 +
+                    (unsigned long long)server.backends[i].start.tv_usec / 1000;
+                // TODO check for 0 division
+                diff = (server.backends[i].bytecount * 1000) / (now - ms);
+                if (curr_min > diff)
+                    curr_min = diff;
+                if (min > curr_min) {
+                    min  = curr_min;
+                    next = i;
                 }
-                backend = &server.backends[next];
             }
-            break;
-        case WEIGHTED_ROUND_ROBIN:
-            /*
-             * 6. WEIGHTED ROUND ROBIN, like the round robin selection but each
-             * backend has a weight value that defines the priority in
-             * receiving work (e.g. maybe some machines have better hw specs
-             * and thus can handle heavier loads -> higher weight value)
-             */
-            while (!backend || backend->alive == false) {
-                next = ATOMIC_VAR_INIT(server.current_backend);
-                while (1) {
-                    next = (next + 1) % conf->backends_nr;
-                    server.current_backend = ATOMIC_VAR_INIT(next);
-                    if (next == 0) {
-                        server.current_weight -= server.gcd;
-                        if (server.current_weight <= 0) {
-                            // get the max weight
-                            int max = 0;
-                            for (int i = 0; i < conf->backends_nr; ++i) {
-                                if (server.backends[i].weight > max)
-                                    max = server.backends[i].weight;
-                            }
-                            server.current_weight = max;
-                            if (server.current_weight == 0) {
-                                backend = &server.backends[next];
-                                break;
-                            }
+            backend = &server.backends[next];
+        }
+        break;
+    case WEIGHTED_ROUND_ROBIN:
+        /*
+         * 6. WEIGHTED ROUND ROBIN, like the round robin selection but each
+         * backend has a weight value that defines the priority in
+         * receiving work (e.g. maybe some machines have better hw specs
+         * and thus can handle heavier loads -> higher weight value)
+         */
+        while (!backend || backend->alive == false) {
+            next = ATOMIC_VAR_INIT(server.current_backend);
+            while (1) {
+                next                   = (next + 1) % conf->backends_nr;
+                server.current_backend = ATOMIC_VAR_INIT(next);
+                if (next == 0) {
+                    server.current_weight -= server.gcd;
+                    if (server.current_weight <= 0) {
+                        // get the max weight
+                        int max = 0;
+                        for (int i = 0; i < conf->backends_nr; ++i) {
+                            if (server.backends[i].weight > max)
+                                max = server.backends[i].weight;
+                        }
+                        server.current_weight = max;
+                        if (server.current_weight == 0) {
+                            backend = &server.backends[next];
+                            break;
                         }
                     }
-                    if (server.backends[next].weight >= server.current_weight) {
-                        backend = &server.backends[next];
-                        break;
-                    }
+                }
+                if (server.backends[next].weight >= server.current_weight) {
+                    backend = &server.backends[next];
+                    break;
                 }
             }
-            break;
-        default:
-            log_error("Unknown balancing algorithm");
-            exit(EXIT_FAILURE);
+        }
+        break;
+    default:
+        log_error("Unknown balancing algorithm");
+        exit(EXIT_FAILURE);
     }
     *backend_ptr = backend;
     return next;
 }
 
-static void route_tcp_to_backend(struct ev_ctx *ctx, struct tcp_session *tcp) {
+static void route_tcp_to_backend(struct ev_ctx *ctx, struct tcp_session *tcp)
+{
     struct backend *backend = NULL;
-    volatile int next =
-        select_backend(&backend, (const char *) tcp->stream.buf);
+    volatile int next = select_backend(&backend, (const char *)tcp->stream.buf);
     // All backends are currently offline
     // TODO must be handled
     if (next == LLB_FAILURE) {
@@ -912,17 +929,16 @@ static void route_tcp_to_backend(struct ev_ctx *ctx, struct tcp_session *tcp) {
         return;
     }
 
-    log_debug("Forwarding TCP connection to %s:%i (%i %lu)",
-              backend->host, backend->port, backend->active_connections,
-              backend->bytecount);
+    log_debug("Forwarding TCP connection to %s:%i (%i %lu)", backend->host,
+              backend->port, backend->active_connections, backend->bytecount);
 
     backend->active_connections++;
-    tcp->status = WAITING_REQUEST;
+    tcp->status      = WAITING_REQUEST;
     tcp->backend_idx = next;
 
     /* Add it to the epoll loop */
-    ev_register_event(ctx, tcp->pipe[CLIENT].fd,
-                      EV_READ, tcp_read_callback, tcp);
+    ev_register_event(ctx, tcp->pipe[CLIENT].fd, EV_READ, tcp_read_callback,
+                      tcp);
     ev_register_event(ctx, fd, EV_READ, tcp_read_callback, tcp);
 }
 
@@ -937,10 +953,11 @@ static void route_tcp_to_backend(struct ev_ctx *ctx, struct tcp_session *tcp) {
  * routing, weighted-round-robin, random routing and leastconn.
  */
 static void process_http_request(struct ev_ctx *ctx,
-                                 struct http_transaction *http) {
+                                 struct http_transaction *http)
+{
     struct backend *backend = NULL;
     volatile int next =
-        select_backend(&backend, (const char *) http->tcp_session.stream.buf);
+        select_backend(&backend, (const char *)http->tcp_session.stream.buf);
     // All backends are currently offline
     // TODO must be handled
     if (next == LLB_FAILURE) {
@@ -956,8 +973,8 @@ static void process_http_request(struct ev_ctx *ctx,
 #if THREADSNR > 0
     pthread_mutex_lock(&mutex);
 #endif
-    int fd = open_connection(&http->tcp_session.pipe[BACKEND],
-                             backend->host, backend->port);
+    int fd = open_connection(&http->tcp_session.pipe[BACKEND], backend->host,
+                             backend->port);
 #if THREADSNR > 0
     pthread_mutex_unlock(&mutex);
 #endif
@@ -971,10 +988,10 @@ static void process_http_request(struct ev_ctx *ctx,
     /* Extract method line from the request */
     size_t mlen = 0, ulen = 0;
     char method[HTTP_METHOD_MAX_LEN] = {0};
-    mlen = strcspn((const char *) http->tcp_session.stream.buf, "\r\n");
+    mlen = strcspn((const char *)http->tcp_session.stream.buf, "\r\n");
     snprintf(method, mlen + 1, "%s", http->tcp_session.stream.buf);
     char *useragent =
-        strstr((const char *) http->tcp_session.stream.buf, "User-Agent:");
+        strstr((const char *)http->tcp_session.stream.buf, "User-Agent:");
     if (useragent) {
         ulen = strcspn(useragent, "\r\n");
         snprintf(method + mlen, ulen + 1, " %s", useragent);
@@ -985,7 +1002,7 @@ static void process_http_request(struct ev_ctx *ctx,
 
     backend->active_connections++;
     http->tcp_session.backend_idx = next;
-    http->tcp_session.status = FORWARDING_REQUEST;
+    http->tcp_session.status      = FORWARDING_REQUEST;
 
     /* Add it to the epoll loop */
     ev_register_event(ctx, fd, EV_WRITE, http_write_callback, http);
@@ -996,8 +1013,9 @@ static void process_http_request(struct ev_ctx *ctx,
  * requesting client, so just schedule a write back to the client
  */
 static void process_http_response(struct ev_ctx *ctx,
-                                  struct http_transaction *http) {
-    (void) ctx;
+                                  struct http_transaction *http)
+{
+    (void)ctx;
     http->tcp_session.status = FORWARDING_RESPONSE;
     enqueue_http_write(http);
 }
@@ -1006,8 +1024,9 @@ static void process_http_response(struct ev_ctx *ctx,
  * Eventloop stop callback, will be triggered by an EV_CLOSEFD event and stop
  * the running loop, unblocking the call.
  */
-static void stop_handler(struct ev_ctx *ctx, void *arg) {
-    (void) arg;
+static void stop_handler(struct ev_ctx *ctx, void *arg)
+{
+    (void)arg;
     ev_stop(ctx);
 }
 
@@ -1017,16 +1036,19 @@ static void stop_handler(struct ev_ctx *ctx, void *arg) {
  * configuration to gracefull close each loop and only in *one thread* register
  * the healthcheck routine to be called once every second.
  */
-static void eventloop_start(void *args) {
+static void eventloop_start(void *args)
+{
     struct listen_payload *loop_data = args;
     struct ev_ctx ctx;
     int *fds = loop_data->fds;
     ev_init(&ctx, EVENTLOOP_MAX_EVENTS);
     // Register stop event
 #ifdef __linux__
-    ev_register_event(&ctx, conf->run, EV_CLOSEFD|EV_READ, stop_handler, NULL);
+    ev_register_event(&ctx, conf->run, EV_CLOSEFD | EV_READ, stop_handler,
+                      NULL);
 #else
-    ev_register_event(&ctx, conf->run[1], EV_CLOSEFD|EV_READ, stop_handler, NULL);
+    ev_register_event(&ctx, conf->run[1], EV_CLOSEFD | EV_READ, stop_handler,
+                      NULL);
 #endif
     // Register frontends listening FDs with accept callback
     for (int i = 0; i < loop_data->frontends_nr; ++i)
@@ -1045,13 +1067,14 @@ static void eventloop_start(void *args) {
  * Fire a read callback to react accordingly to the descriptor ready to be read,
  * calling the HTTP read callback
  */
-static void enqueue_http_read(const struct http_transaction *http) {
+static void enqueue_http_read(const struct http_transaction *http)
+{
     if (http->tcp_session.status == WAITING_REQUEST)
         ev_fire_event(http->tcp_session.ctx, http->tcp_session.pipe[CLIENT].fd,
-                      EV_READ, http_read_callback, (void *) http);
+                      EV_READ, http_read_callback, (void *)http);
     else if (http->tcp_session.status == WAITING_RESPONSE)
         ev_fire_event(http->tcp_session.ctx, http->tcp_session.pipe[BACKEND].fd,
-                      EV_READ, http_read_callback, (void *) http);
+                      EV_READ, http_read_callback, (void *)http);
 }
 
 /*
@@ -1060,13 +1083,14 @@ static void enqueue_http_read(const struct http_transaction *http) {
  * Fire a write callback to reply after a client request, calling the HTTP write
  * callback
  */
-static void enqueue_http_write(const struct http_transaction *http) {
+static void enqueue_http_write(const struct http_transaction *http)
+{
     if (http->tcp_session.status == FORWARDING_REQUEST)
         ev_fire_event(http->tcp_session.ctx, http->tcp_session.pipe[BACKEND].fd,
-                      EV_WRITE, http_write_callback, (void *) http);
+                      EV_WRITE, http_write_callback, (void *)http);
     else if (http->tcp_session.status == FORWARDING_RESPONSE)
         ev_fire_event(http->tcp_session.ctx, http->tcp_session.pipe[CLIENT].fd,
-                      EV_WRITE, http_write_callback, (void *) http);
+                      EV_WRITE, http_write_callback, (void *)http);
 }
 
 /*
@@ -1075,13 +1099,14 @@ static void enqueue_http_write(const struct http_transaction *http) {
  * Fire a read callback to react accordingly to the descriptor ready to be used,
  * calling the TCP read callback
  */
-static void enqueue_tcp_read(const struct tcp_session *tcp) {
+static void enqueue_tcp_read(const struct tcp_session *tcp)
+{
     if (tcp->status == WAITING_REQUEST)
-        ev_fire_event(tcp->ctx, tcp->pipe[CLIENT].fd,
-                      EV_READ, tcp_read_callback, (void *) tcp);
+        ev_fire_event(tcp->ctx, tcp->pipe[CLIENT].fd, EV_READ,
+                      tcp_read_callback, (void *)tcp);
     else if (tcp->status == WAITING_RESPONSE)
-        ev_fire_event(tcp->ctx, tcp->pipe[BACKEND].fd,
-                      EV_READ, tcp_read_callback, (void *) tcp);
+        ev_fire_event(tcp->ctx, tcp->pipe[BACKEND].fd, EV_READ,
+                      tcp_read_callback, (void *)tcp);
 }
 
 /*
@@ -1090,13 +1115,14 @@ static void enqueue_tcp_read(const struct tcp_session *tcp) {
  * Fire a write callback to reply after a client request, calling the TCP write
  * callback
  */
-static void enqueue_tcp_write(const struct tcp_session *tcp) {
+static void enqueue_tcp_write(const struct tcp_session *tcp)
+{
     if (tcp->status == FORWARDING_REQUEST)
-        ev_fire_event(tcp->ctx, tcp->pipe[BACKEND].fd,
-                      EV_WRITE, tcp_write_callback, (void *) tcp);
+        ev_fire_event(tcp->ctx, tcp->pipe[BACKEND].fd, EV_WRITE,
+                      tcp_write_callback, (void *)tcp);
     else if (tcp->status == FORWARDING_RESPONSE)
-        ev_fire_event(tcp->ctx, tcp->pipe[CLIENT].fd,
-                      EV_WRITE, tcp_write_callback, (void *) tcp);
+        ev_fire_event(tcp->ctx, tcp->pipe[CLIENT].fd, EV_WRITE,
+                      tcp_write_callback, (void *)tcp);
 }
 
 /*
@@ -1104,13 +1130,15 @@ static void enqueue_tcp_write(const struct tcp_session *tcp) {
  * divisor on an array of values (values are the weight of each backend)
  */
 
-static inline int gcd(int a, int b) {
+static inline int gcd(int a, int b)
+{
     if (a == 0)
         return b;
     return gcd(b % a, a);
 }
 
-static inline int GCD(int *arr, size_t size) {
+static inline int GCD(int *arr, size_t size)
+{
     int result = arr[0];
     for (size_t i = 1; i < size; ++i) {
         result = gcd(arr[i], result);
@@ -1131,7 +1159,8 @@ static inline int GCD(int *arr, size_t size) {
  * structs and its length. Every frontend store an address and a port to start
  * listening on.
  */
-int start_server(const struct frontend *frontends, int frontends_nr) {
+int start_server(const struct frontend *frontends, int frontends_nr)
+{
 
     /* Initialize global llb instance */
     server.backends = conf->backends;
@@ -1141,7 +1170,7 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
         server.backends[i].bytecount = ATOMIC_VAR_INIT(0);
     }
     server.current_backend =
-        ATOMIC_VAR_INIT(conf->load_balancing == WEIGHTED_ROUND_ROBIN ? -1 : 0) ;
+        ATOMIC_VAR_INIT(conf->load_balancing == WEIGHTED_ROUND_ROBIN ? -1 : 0);
     server.current_weight = ATOMIC_VAR_INIT(0);
     if (conf->load_balancing == WEIGHTED_ROUND_ROBIN) {
         int weights[conf->backends_nr];
@@ -1153,24 +1182,23 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
         server.pool = memorypool_new(MAX_ACTIVE_SESSIONS,
                                      sizeof(struct http_transaction));
     else
-        server.pool = memorypool_new(MAX_ACTIVE_SESSIONS,
-                                     sizeof(struct tcp_session));
+        server.pool =
+            memorypool_new(MAX_ACTIVE_SESSIONS, sizeof(struct tcp_session));
 
     /* Setup SSL in case of flag true */
     if (conf->tls == true) {
         openssl_init();
         server.ssl_ctx = create_ssl_context();
-        load_certificates(server.ssl_ctx, conf->cafile,
-                          conf->certfile, conf->keyfile);
+        load_certificates(server.ssl_ctx, conf->cafile, conf->certfile,
+                          conf->keyfile);
     }
 
     log_info("Server start");
 
     struct listen_payload loop_start = {
-        .fds = llb_calloc(frontends_nr, sizeof(struct frontend)),
+        .fds          = llb_calloc(frontends_nr, sizeof(struct frontend)),
         .frontends_nr = frontends_nr,
-        .cronjobs = ATOMIC_VAR_INIT(false)
-    };
+        .cronjobs     = ATOMIC_VAR_INIT(false)};
 
     /* Start frontend endpoints listening for new connections */
     for (int i = 0; i < frontends_nr; ++i)
@@ -1179,7 +1207,8 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
 #if THREADSNR > 0
     pthread_t thrs[THREADSNR];
     for (int i = 0; i < THREADSNR; ++i) {
-        pthread_create(&thrs[i], NULL, (void * (*) (void *)) &eventloop_start, &loop_start);
+        pthread_create(&thrs[i], NULL, (void *(*)(void *)) & eventloop_start,
+                       &loop_start);
     }
 #endif
     loop_start.cronjobs = true;
@@ -1228,7 +1257,8 @@ int start_server(const struct frontend *frontends, int frontends_nr) {
 /*
  * Make the entire process a daemon
  */
-void daemonize(void) {
+void daemonize(void)
+{
 
     int fd;
 
@@ -1241,6 +1271,7 @@ void daemonize(void) {
         dup2(fd, STDIN_FILENO);
         dup2(fd, STDOUT_FILENO);
         dup2(fd, STDERR_FILENO);
-        if (fd > STDERR_FILENO) close(fd);
+        if (fd > STDERR_FILENO)
+            close(fd);
     }
 }

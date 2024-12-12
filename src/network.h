@@ -29,8 +29,8 @@
 #ifndef NETWORK_H
 #define NETWORK_H
 
-#include <openssl/ssl.h>
 #include <arpa/inet.h>
+#include <openssl/ssl.h>
 
 struct stream;
 
@@ -57,11 +57,11 @@ struct connection {
     SSL *ssl;
     SSL_CTX *ctx;
     char ip[INET_ADDRSTRLEN + 6];
-    int (*accept) (struct connection *, int);
-    int (*connect) (struct connection *, const char *, int);
-    ssize_t (*send) (struct connection *, struct stream *);
-    ssize_t (*recv) (struct connection *, struct stream *);
-    void (*close) (struct connection *);
+    int (*accept)(struct connection *, int);
+    int (*connect)(struct connection *, const char *, int);
+    ssize_t (*send)(struct connection *, struct stream *);
+    ssize_t (*recv)(struct connection *, struct stream *);
+    void (*close)(struct connection *);
 };
 
 /*
@@ -117,7 +117,8 @@ struct tcp_session {
     int backend_idx;
     struct stream stream;
     struct connection pipe[2];
-    struct ev_ctx *ctx; /* An event context reference used to fire write events */
+    struct ev_ctx
+        *ctx; /* An event context reference used to fire write events */
 };
 
 /*
@@ -131,10 +132,10 @@ struct http_transaction {
     int encoding;
 };
 
-#define CLIENT  0
-#define BACKEND 1
+#define CLIENT             0
+#define BACKEND            1
 
-#define client_conn(http) (http)->pipe[CLIENT]
+#define client_conn(http)  (http)->pipe[CLIENT]
 #define backend_conn(http) (http)->pipe[BACKEND]
 
 void connection_init(struct connection *, const SSL_CTX *);

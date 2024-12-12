@@ -26,18 +26,19 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <string.h>
-#include <netdb.h>
-#include <fcntl.h>
-#include <netinet/tcp.h>
-#include <sys/socket.h>
-#include <openssl/err.h>
-#include "config.h"
 #include "network.h"
+#include "config.h"
 #include "llb_internal.h"
+#include <fcntl.h>
+#include <netdb.h>
+#include <netinet/tcp.h>
+#include <openssl/err.h>
+#include <string.h>
+#include <sys/socket.h>
 
 /* Set non-blocking socket */
-static inline int set_nonblocking(int fd) {
+static inline int set_nonblocking(int fd)
+{
     int flags, result;
     flags = fcntl(fd, F_GETFL, 0);
 
@@ -56,7 +57,8 @@ err:
     return LLB_FAILURE;
 }
 
-static inline int set_cloexec(int fd) {
+static inline int set_cloexec(int fd)
+{
     int flags, result;
     flags = fcntl(fd, F_GETFL, 0);
 
@@ -79,8 +81,9 @@ err:
  * Set TCP_NODELAY flag to true, disabling Nagle's algorithm, no more waiting
  * for incoming packets on the buffer
  */
-static inline int set_tcpnodelay(int fd) {
-    return setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &(int) {1}, sizeof(int));
+static inline int set_tcpnodelay(int fd)
+{
+    return setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &(int){1}, sizeof(int));
 }
 
 /*
@@ -88,13 +91,12 @@ static inline int set_tcpnodelay(int fd) {
  * SO_REUSEADDR in order to avoid annoying waiting for port to be available
  * after the process exited
  */
-static int create_and_bind(const char *host, const char *port) {
+static int create_and_bind(const char *host, const char *port)
+{
 
-    struct addrinfo hints = {
-        .ai_family = AF_UNSPEC,
-        .ai_socktype = SOCK_STREAM,
-        .ai_flags = AI_PASSIVE
-    };
+    struct addrinfo hints = {.ai_family   = AF_UNSPEC,
+                             .ai_socktype = SOCK_STREAM,
+                             .ai_flags    = AI_PASSIVE};
 
     struct addrinfo *result, *rp;
     int sfd;
@@ -105,18 +107,19 @@ static int create_and_bind(const char *host, const char *port) {
     for (rp = result; rp != NULL; rp = rp->ai_next) {
         sfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
 
-        if (sfd == -1) continue;
+        if (sfd == -1)
+            continue;
 
         /* set SO_REUSEADDR so the socket will be reusable after process kill */
-        if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR,
-                       &(int) { 1 }, sizeof(int)) < 0)
+        if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) <
+            0)
             perror("SO_REUSEADDR");
 
         if ((bind(sfd, rp->ai_addr, rp->ai_addrlen)) == 0) {
             /* Succesful bind */
             break;
         }
-        (void) close(sfd);
+        (void)close(sfd);
     }
 
     freeaddrinfo(result);
@@ -136,7 +139,8 @@ err:
  * Create a non-blocking socket and make it listen on the specfied address and
  * port
  */
-int make_listen(const char *host, int port) {
+int make_listen(const char *host, int port)
+{
 
     int sfd;
 
@@ -150,10 +154,10 @@ int make_listen(const char *host, int port) {
     if ((set_nonblocking(sfd)) == -1)
         abort();
 
-    (void) set_cloexec(sfd);
+    (void)set_cloexec(sfd);
 
     // Set TCP_NODELAY only for TCP sockets
-    (void) set_tcpnodelay(sfd);
+    (void)set_tcpnodelay(sfd);
 
     if ((listen(sfd, conf->tcp_backlog)) == -1) {
         perror("listen");
@@ -167,7 +171,8 @@ int make_listen(const char *host, int port) {
  * Create a non-blocking socket and use it to connect to the specified host and
  * port
  */
-int make_connection(const char *host, int port) {
+int make_connection(const char *host, int port)
+{
 
     struct sockaddr_in serveraddr;
     struct hostent *server;
@@ -184,16 +189,16 @@ int make_connection(const char *host, int port) {
 
     /* build the server's address */
     serveraddr.sin_family = AF_INET;
-    serveraddr.sin_port = htons(port);
-    serveraddr.sin_addr = *((struct in_addr *) server->h_addr);
+    serveraddr.sin_port   = htons(port);
+    serveraddr.sin_addr   = *((struct in_addr *)server->h_addr);
     bzero(&(serveraddr.sin_zero), 8);
 
-    (void) set_nonblocking(sfd);
-    (void) set_tcpnodelay(sfd);
+    (void)set_nonblocking(sfd);
+    (void)set_tcpnodelay(sfd);
 
     /* connect: create a connection with the server */
-    if (connect(sfd, (const struct sockaddr *) &serveraddr,
-                sizeof(serveraddr)) < 0)
+    if (connect(sfd, (const struct sockaddr *)&serveraddr, sizeof(serveraddr)) <
+        0)
         goto err;
 
     return sfd;
@@ -213,14 +218,16 @@ err:
  * Accept an optional argument `ip` to store the address of the connecting
  * client.
  */
-static int accept_conn(int sfd, char *ip) {
+static int accept_conn(int sfd, char *ip)
+{
 
     int clientsock;
     struct sockaddr_in addr;
     socklen_t addrlen = sizeof(addr);
 
-    if ((clientsock = accept(sfd, (struct sockaddr *) &addr, &addrlen)) < 0) {
-        if (errno != EWOULDBLOCK && errno != EAGAIN) perror("accept");
+    if ((clientsock = accept(sfd, (struct sockaddr *)&addr, &addrlen)) < 0) {
+        if (errno != EWOULDBLOCK && errno != EAGAIN)
+            perror("accept");
         return LLB_FAILURE;
     }
 
@@ -228,19 +235,21 @@ static int accept_conn(int sfd, char *ip) {
     if ((set_nonblocking(clientsock)) == -1)
         abort();
 
-    (void) set_cloexec(clientsock);
+    (void)set_cloexec(clientsock);
 
     // Set TCP_NODELAY only for TCP sockets
-    (void) set_tcpnodelay(clientsock);
+    (void)set_tcpnodelay(clientsock);
 
     char ip_buff[INET_ADDRSTRLEN];
     if (inet_ntop(AF_INET, &addr.sin_addr, ip_buff, sizeof(ip_buff)) == NULL) {
-        if (close(clientsock) < 0) perror("close");
+        if (close(clientsock) < 0)
+            perror("close");
         return LLB_FAILURE;
     }
 
     if (ip)
-        snprintf(ip, INET_ADDRSTRLEN+6, "%s:%i", ip_buff, ntohs(addr.sin_port));
+        snprintf(ip, INET_ADDRSTRLEN + 6, "%s:%i", ip_buff,
+                 ntohs(addr.sin_port));
 
     return clientsock;
 }
@@ -253,10 +262,11 @@ static int accept_conn(int sfd, char *ip) {
  * in that case errno will be set to EAGAIN and should be treated as an
  * expected valid state.
  */
-ssize_t stream_send(int fd, struct stream *stream) {
+ssize_t stream_send(int fd, struct stream *stream)
+{
 
     size_t total = stream->size;
-    ssize_t n = 0;
+    ssize_t n    = 0;
 
     while (stream->size > 0) {
         n = write(fd, stream->buf + n, stream->size);
@@ -285,12 +295,14 @@ err:
  * errno will be set to EAGAIN and should be treated as an expected valid
  * state.
  */
-ssize_t stream_recv(int fd, struct stream *stream) {
+ssize_t stream_recv(int fd, struct stream *stream)
+{
 
     ssize_t n = 0;
 
     do {
-        n = read(fd, stream->buf + stream->size, stream->capacity-stream->size);
+        n = read(fd, stream->buf + stream->size,
+                 stream->capacity - stream->size);
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 break;
@@ -298,8 +310,8 @@ ssize_t stream_recv(int fd, struct stream *stream) {
                 goto err;
         }
 
-        //if (n == 0)
-        //    return LLB_SUCCESS;
+        // if (n == 0)
+        //     return LLB_SUCCESS;
 
         stream->size += n;
 
@@ -323,18 +335,18 @@ err:
  * ======================================================
  */
 
-void openssl_init() {
+void openssl_init(void)
+{
     SSL_library_init();
     ERR_load_crypto_strings();
     SSL_load_error_strings();
     OpenSSL_add_ssl_algorithms();
 }
 
-void openssl_cleanup() {
-    EVP_cleanup();
-}
+void openssl_cleanup(void) { EVP_cleanup(); }
 
-SSL_CTX *create_ssl_context() {
+SSL_CTX *create_ssl_context(void)
+{
 
     SSL_CTX *ctx;
 
@@ -351,7 +363,7 @@ SSL_CTX *create_ssl_context() {
         exit(EXIT_FAILURE);
     }
 
-    SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2|SSL_OP_NO_SSLv3);
+    SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
     SSL_CTX_set_options(ctx, SSL_OP_SINGLE_DH_USE);
 
     if (!(conf->tls_protocols & LLB_TLSv1))
@@ -380,23 +392,26 @@ SSL_CTX *create_ssl_context() {
     return ctx;
 }
 
-static int client_certificate_verify(int preverify_ok, X509_STORE_CTX *ctx) {
+static int client_certificate_verify(int preverify_ok, X509_STORE_CTX *ctx)
+{
 
-    (void) ctx;  // Unused
+    (void)ctx; // Unused
 
     /* Preverify should check expiry, revocation. */
     return preverify_ok;
 }
 
-void load_certificates(SSL_CTX *ctx, const char *ca,
-                       const char *cert, const char *key) {
+void load_certificates(SSL_CTX *ctx, const char *ca, const char *cert,
+                       const char *key)
+{
 
     if (SSL_CTX_load_verify_locations(ctx, ca, NULL) <= 0) {
         ERR_print_errors_fp(stderr);
         exit(EXIT_FAILURE);
     }
 
-    SSL_CTX_set_mode(ctx, SSL_MODE_ENABLE_PARTIAL_WRITE|SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+    SSL_CTX_set_mode(ctx, SSL_MODE_ENABLE_PARTIAL_WRITE |
+                              SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
     SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, client_certificate_verify);
     SSL_CTX_set_ecdh_auto(ctx, 1);
 
@@ -405,19 +420,20 @@ void load_certificates(SSL_CTX *ctx, const char *ca,
         exit(EXIT_FAILURE);
     }
 
-    if (SSL_CTX_use_PrivateKey_file(ctx, key, SSL_FILETYPE_PEM) <= 0 ) {
+    if (SSL_CTX_use_PrivateKey_file(ctx, key, SSL_FILETYPE_PEM) <= 0) {
         ERR_print_errors_fp(stderr);
         exit(EXIT_FAILURE);
     }
 
     /* verify private key */
-    if (!SSL_CTX_check_private_key(ctx) ) {
+    if (!SSL_CTX_check_private_key(ctx)) {
         fprintf(stderr, "Private key does not match the public certificate\n");
         exit(EXIT_FAILURE);
     }
 }
 
-SSL *ssl_accept(SSL_CTX *ctx, int fd) {
+SSL *ssl_accept(SSL_CTX *ctx, int fd)
+{
     SSL *ssl = SSL_new(ctx);
     SSL_set_fd(ssl, fd);
     SSL_set_accept_state(ssl);
@@ -432,9 +448,10 @@ SSL *ssl_accept(SSL_CTX *ctx, int fd) {
  * structure passed in as argument, just like the `stream_send` function but
  * using an inited SSL pointer to encrypt the data before sending it out
  */
-ssize_t ssl_stream_send(SSL *ssl, struct stream *stream) {
+ssize_t ssl_stream_send(SSL *ssl, struct stream *stream)
+{
     size_t total = stream->size;
-    ssize_t n = 0;
+    ssize_t n    = 0;
 
     ERR_clear_error();
 
@@ -443,9 +460,9 @@ ssize_t ssl_stream_send(SSL *ssl, struct stream *stream) {
             int err = SSL_get_error(ssl, n);
             if (err == SSL_ERROR_WANT_WRITE || SSL_ERROR_NONE)
                 continue;
-            if (err == SSL_ERROR_ZERO_RETURN
-                || (err == SSL_ERROR_SYSCALL && !errno))
-                return LLB_SUCCESS;  // Connection closed
+            if (err == SSL_ERROR_ZERO_RETURN ||
+                (err == SSL_ERROR_SYSCALL && !errno))
+                return LLB_SUCCESS; // Connection closed
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 break;
             else
@@ -467,21 +484,23 @@ err:
  * passed in as argument, just like the `stream_recv` function but using an
  * inited SSL pointer to decrypt the data after the reception
  */
-ssize_t ssl_stream_recv(SSL *ssl, struct stream *stream) {
+ssize_t ssl_stream_recv(SSL *ssl, struct stream *stream)
+{
 
     ssize_t n = 0;
 
     ERR_clear_error();
 
     do {
-        n = SSL_read(ssl, stream->buf + stream->size, stream->capacity - stream->size);
+        n = SSL_read(ssl, stream->buf + stream->size,
+                     stream->capacity - stream->size);
         if (n <= 0) {
             int err = SSL_get_error(ssl, n);
             if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_NONE)
                 continue;
-            if (err == SSL_ERROR_ZERO_RETURN
-                || (err == SSL_ERROR_SYSCALL && !errno))
-                return LLB_SUCCESS;  // Connection closed
+            if (err == SSL_ERROR_ZERO_RETURN ||
+                (err == SSL_ERROR_SYSCALL && !errno))
+                return LLB_SUCCESS; // Connection closed
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 break;
             else
@@ -511,80 +530,88 @@ err:
  * Main connection functions, meant to be set as function pointer to a struct
  * connection handle
  */
-static int conn_accept(struct connection *c, int fd) {
+static int conn_accept(struct connection *c, int fd)
+{
     int ret = accept_conn(fd, c->ip);
-    c->fd = ret;
+    c->fd   = ret;
     return ret;
 }
 
-static int conn_connect(struct connection *c, const char *host, int port) {
+static int conn_connect(struct connection *c, const char *host, int port)
+{
     c->fd = make_connection(host, port);
     return c->fd;
 }
 
-static ssize_t conn_send(struct connection *c, struct stream *stream) {
+static ssize_t conn_send(struct connection *c, struct stream *stream)
+{
     return stream_send(c->fd, stream);
 }
 
-static ssize_t conn_recv(struct connection *c, struct stream * stream) {
+static ssize_t conn_recv(struct connection *c, struct stream *stream)
+{
     return stream_recv(c->fd, stream);
 }
 
-static void conn_close(struct connection *c) {
-    close(c->fd);
-}
+static void conn_close(struct connection *c) { close(c->fd); }
 
 // TLS version of the connection functions
 // XXX Not so neat, improve later
-static int conn_tls_accept(struct connection *c, int serverfd) {
+static int conn_tls_accept(struct connection *c, int serverfd)
+{
     int fd = accept_conn(serverfd, c->ip);
     if (fd < 0)
         return fd;
     c->ssl = ssl_accept(c->ctx, fd);
-    c->fd = fd;
+    c->fd  = fd;
     return fd;
 }
 
-static int conn_tls_connect(struct connection *c, const char *host, int port) {
+static int conn_tls_connect(struct connection *c, const char *host, int port)
+{
     // TODO
-    (void) c;
-    (void) host;
-    (void) port;
+    (void)c;
+    (void)host;
+    (void)port;
     return LLB_SUCCESS;
 }
 
-static ssize_t conn_tls_send(struct connection *c, struct stream *stream) {
+static ssize_t conn_tls_send(struct connection *c, struct stream *stream)
+{
     return ssl_stream_send(c->ssl, stream);
 }
 
-static ssize_t conn_tls_recv(struct connection *c, struct stream * stream) {
+static ssize_t conn_tls_recv(struct connection *c, struct stream *stream)
+{
     return ssl_stream_recv(c->ssl, stream);
 }
 
-static void conn_tls_close(struct connection *c) {
+static void conn_tls_close(struct connection *c)
+{
     if (c->ssl)
         SSL_free(c->ssl);
     if (c->fd >= 0 && close(c->fd) < 0)
         perror("close");
 }
 
-void connection_init(struct connection *conn, const SSL_CTX *ssl_ctx) {
-    conn->fd = -1;
+void connection_init(struct connection *conn, const SSL_CTX *ssl_ctx)
+{
+    conn->fd  = -1;
     conn->ssl = NULL; // Will be filled in case of TLS connection on accept
-    conn->ctx = (SSL_CTX *) ssl_ctx;
+    conn->ctx = (SSL_CTX *)ssl_ctx;
     if (ssl_ctx) {
         // We need a TLS connection
-        conn->accept = conn_tls_accept;
+        conn->accept  = conn_tls_accept;
         conn->connect = conn_tls_connect;
-        conn->send = conn_tls_send;
-        conn->recv = conn_tls_recv;
-        conn->close = conn_tls_close;
+        conn->send    = conn_tls_send;
+        conn->recv    = conn_tls_recv;
+        conn->close   = conn_tls_close;
     } else {
-        conn->accept = conn_accept;
+        conn->accept  = conn_accept;
         conn->connect = conn_connect;
-        conn->send = conn_send;
-        conn->recv = conn_recv;
-        conn->close = conn_close;
+        conn->send    = conn_send;
+        conn->recv    = conn_recv;
+        conn->close   = conn_close;
     }
 }
 
@@ -596,7 +623,8 @@ void connection_init(struct connection *conn, const SSL_CTX *ssl_ctx) {
  * simply call accept, send, recv or close without actually worrying of the
  * type of the underlying communication.
  */
-struct connection *connection_new(const SSL_CTX *ssl_ctx) {
+struct connection *connection_new(const SSL_CTX *ssl_ctx)
+{
     struct connection *conn = llb_malloc(sizeof(*conn));
     if (!conn)
         return NULL;
@@ -614,22 +642,21 @@ struct connection *connection_new(const SSL_CTX *ssl_ctx) {
  * in order to leverage the previously set underlying function.
  */
 
-int accept_connection(struct connection *c, int fd) {
-    return c->accept(c, fd);
-}
+int accept_connection(struct connection *c, int fd) { return c->accept(c, fd); }
 
-int open_connection(struct connection *c, const char *host, int port) {
+int open_connection(struct connection *c, const char *host, int port)
+{
     return c->connect(c, host, port);
 }
 
-ssize_t send_data(struct connection *c, struct stream *stream) {
+ssize_t send_data(struct connection *c, struct stream *stream)
+{
     return c->send(c, stream);
 }
 
-ssize_t recv_data(struct connection *c, struct stream *stream) {
+ssize_t recv_data(struct connection *c, struct stream *stream)
+{
     return c->recv(c, stream);
 }
 
-void close_connection(struct connection *c) {
-    c->close(c);
-}
+void close_connection(struct connection *c) { c->close(c); }

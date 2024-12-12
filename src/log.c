@@ -25,14 +25,14 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <time.h>
-#include <errno.h>
-#include <stdio.h>
-#include <stdarg.h>
-#include <assert.h>
-#include <string.h>
 #include "log.h"
 #include "config.h"
+#include <assert.h>
+#include <errno.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
 
 /* Global file handle for logging on disk */
 static FILE *fh = NULL;
@@ -41,26 +41,30 @@ static FILE *fh = NULL;
  * Tries to open in append mode a file on disk, to be called only if logging to
  * disk is active
  */
-void llb_log_init(const char *file) {
-    if (!file) return;
+void llb_log_init(const char *file)
+{
+    if (!file)
+        return;
     fh = fopen(file, "a+");
     if (!fh)
         printf("%lu WARNING: Unable to open file %s: %s\n",
-               (unsigned long) time(NULL), file, strerror(errno));
+               (unsigned long)time(NULL), file, strerror(errno));
 }
 
 /*
  * Close the previously opened file handler, to be called only after
  * llb_log_init has been called
  */
-void llb_log_close(void) {
+void llb_log_close(void)
+{
     if (fh) {
         fflush(fh);
         fclose(fh);
     }
 }
 
-void llb_log(int level, const char *fmt, ...) {
+void llb_log(int level, const char *fmt, ...)
+{
 
     if (level < conf->loglevel)
         return;
@@ -80,12 +84,12 @@ void llb_log(int level, const char *fmt, ...) {
 
     // Open two handler, one for standard output and a second for the
     // persistent log file
-    FILE *fp = stdout;
+    FILE *fp              = stdout;
 
     if (!fp)
         return;
 
-    fprintf(fp, "%lu %s\n", (unsigned long) time(NULL), msg);
+    fprintf(fp, "%lu %s\n", (unsigned long)time(NULL), msg);
     if (fh)
-        fprintf(fh, "%lu %s\n", (unsigned long) time(NULL), msg);
+        fprintf(fh, "%lu %s\n", (unsigned long)time(NULL), msg);
 }

@@ -30,8 +30,8 @@
 
 #include <time.h>
 
-#define EV_OK  0
-#define EV_ERR 1
+#define EV_OK             0
+#define EV_ERR            1
 
 /*
  * Timeout value accepted by every IO mux implementation, -1 means no timeout
@@ -136,10 +136,8 @@ int ev_del_fd(struct ev_ctx *, int);
 int ev_register_event(struct ev_ctx *, int, int,
                       void (*callback)(struct ev_ctx *, void *), void *);
 
-int ev_register_cron(struct ev_ctx *,
-                     void (*callback)(struct ev_ctx *, void *),
-                     void *,
-                     long long, long long);
+int ev_register_cron(struct ev_ctx *, void (*callback)(struct ev_ctx *, void *),
+                     void *, long long, long long);
 
 /*
  * Register a new event for the next loop cycle to a FD. Equal to ev_watch_fd

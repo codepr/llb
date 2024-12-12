@@ -28,72 +28,73 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#include <string.h>
 #include <stdbool.h>
+#include <string.h>
 
 // Eventloop backend check
 #ifdef __linux__
 #include <linux/version.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 44)
-#define EPOLL 1
+#define EPOLL             1
 #define EVENTLOOP_BACKEND "epoll"
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(2, 1, 23)
-#define POLL 1
+#define POLL              1
 #define EVENTLOOP_BACKEND "poll"
 #else
-#define SELECT 1
+#define SELECT            1
 #define EVENTLOOP_BACKEND "select"
 #endif
 
-#elif defined(__APPLE__) || defined(__FreeBSD__) \
-       || defined(__OpenBSD__) || defined (__NetBSD__)
-#define KQUEUE 1
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) ||    \
+    defined(__NetBSD__)
+#define KQUEUE            1
 #define EVENTLOOP_BACKEND "kqueue"
 #else
-#define SELECT 1
+#define SELECT            1
 #define EVENTLOOP_BACKEND "select"
 #endif // __linux__
 
 // TLS versions
 
-#define LLB_TLSv1       0x01
-#define LLB_TLSv1_1     0x02
-#define LLB_TLSv1_2     0x04
-#define LLB_TLSv1_3     0x08
+#define LLB_TLSv1              0x01
+#define LLB_TLSv1_1            0x02
+#define LLB_TLSv1_2            0x04
+#define LLB_TLSv1_3            0x08
 
 // Default parameters
 
-#define VERSION                     "0.1.7"
-#define DEFAULT_MODE                LLB_HTTP_MODE
-#define DEFAULT_LOG_LEVEL           DEBUG
-#define DEFAULT_LOG_PATH            "/var/log/llb.log"
-#define DEFAULT_CONF_PATH           "/etc/llb/llb.conf"
-#define DEFAULT_HOSTNAME            "127.0.0.1"
-#define DEFAULT_PORT                8789
-#define DEFAULT_LOAD_BALANCING      ROUND_ROBIN
+#define VERSION                "0.1.7"
+#define DEFAULT_MODE           LLB_HTTP_MODE
+#define DEFAULT_LOG_LEVEL      DEBUG
+#define DEFAULT_LOG_PATH       "/var/log/llb.log"
+#define DEFAULT_CONF_PATH      "/etc/llb/llb.conf"
+#define DEFAULT_HOSTNAME       "127.0.0.1"
+#define DEFAULT_PORT           8789
+#define DEFAULT_LOAD_BALANCING ROUND_ROBIN
 #ifdef TLS1_3_VERSION
-#define DEFAULT_TLS_PROTOCOLS       (LLB_TLSv1_2 | LLB_TLSv1_3)
+#define DEFAULT_TLS_PROTOCOLS (LLB_TLSv1_2 | LLB_TLSv1_3)
 #else
-#define DEFAULT_TLS_PROTOCOLS       LLB_TLSv1_2
+#define DEFAULT_TLS_PROTOCOLS LLB_TLSv1_2
 #endif
 
 #define STREQ(s1, s2, len) strncasecmp(s1, s2, len) == 0 ? true : false
 
-#define PARSE_CONFIG_COMMAS(token, target, type) do {           \
-    type *t = (type *) (target);                                \
-    char *end_token;                                            \
-    size_t toklen = strlen((token));                            \
-    char tmp[toklen + 1];                                       \
-    snprintf(tmp, toklen + 1, "%s", (token));                   \
-    char *host = strtok_r(tmp, ":", &end_token);                \
-    char *port = strtok_r(NULL, ":", &end_token);               \
-    char *weight = strtok_r(NULL, ":", &end_token);             \
-    if (weight != NULL) {                                       \
-        t->weight = atoi(weight);                               \
-    }                                                           \
-    snprintf(t->host, strlen(host) + 1, "%s", host);            \
-    t->port = atoi(port);                                       \
-} while (0);
+#define PARSE_CONFIG_COMMAS(token, target, type)                               \
+    do {                                                                       \
+        type *t = (type *)(target);                                            \
+        char *end_token;                                                       \
+        size_t toklen = strlen((token));                                       \
+        char tmp[toklen + 1];                                                  \
+        snprintf(tmp, toklen + 1, "%s", (token));                              \
+        char *host   = strtok_r(tmp, ":", &end_token);                         \
+        char *port   = strtok_r(NULL, ":", &end_token);                        \
+        char *weight = strtok_r(NULL, ":", &end_token);                        \
+        if (weight != NULL) {                                                  \
+            t->weight = atoi(weight);                                          \
+        }                                                                      \
+        snprintf(t->host, strlen(host) + 1, "%s", host);                       \
+        t->port = atoi(port);                                                  \
+    } while (0);
 
 struct config {
     /* llb version <MAJOR.MINOR.PATCH> */
